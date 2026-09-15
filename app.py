@@ -15,7 +15,6 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- スマホ対応＆画像送信可能なチャットUIのHTML ---
-# （1ファイルで完結するようにここにHTMLを記述しています）
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
@@ -41,7 +40,7 @@ HTML_TEMPLATE = """
             font-size: 1.1rem;
             font-weight: bold;
             border-bottom: 1px solid #333;
-            color: #d4af37; /* エルフっぽい上品なゴールド系 */
+            color: #d4af37;
         }
         #chat-container {
             flex: 1;
@@ -169,7 +168,6 @@ HTML_TEMPLATE = """
             const text = messageInput.value.trim();
             if (!text && !selectedFileBase64) return;
 
-            // ユーザーのメッセージを画面に追加
             let userHtml = text;
             if (selectedFileBase64) {
                 userHtml += `<br><img src="data:${selectedMimeType};base64,${selectedFileBase64}">`;
@@ -180,7 +178,6 @@ HTML_TEMPLATE = """
             const currentImg = selectedFileBase64;
             const currentMime = selectedMimeType;
 
-            // 入力欄をクリア
             messageInput.value = '';
             imageInput.value = '';
             selectedFileBase64 = null;
@@ -188,7 +185,6 @@ HTML_TEMPLATE = """
             filePreview.style.display = 'none';
             sendBtn.disabled = true;
 
-            // ローディング表示（……思案中）
             const loadingId = appendMessage('……思考中……', 'assistant');
 
             try {
@@ -199,7 +195,6 @@ HTML_TEMPLATE = """
                 });
                 const data = await response.json();
                 
-                // ローディングを削除して実際の返信を表示
                 document.getElementById(loadingId).remove();
                 appendMessage(data.reply, 'assistant');
             } catch (err) {
@@ -240,47 +235,55 @@ def chat():
     image_base64 = data.get("image")
     mime_type = data.get("mime_type")
     
-    # テスト用として固定のユーザーID（必要に応じてブラウザごとにcookie等で分けることも可能ですが、まずはシンプルに固定）
     user_id = "web_user_default"
 
+    chat_history = []
+    # 【安全対策】Supabaseの構造が違ってエラーが出ても、チャット自体が止まらないように保護しています
     try:
-        # Supabaseから直近の会話履歴を取得
-        response = supabase.table("memories").select("role, content").eq("user_id", user_id).order("created_at", desc=False).limit(10).execute()
-        chat_history = response.data if response.data else []
+        response = supabase.table("memories").select("*").eq("user_id", user_id).limit(10).execute()
+        if response.data:
+            chat_history = response.data
+    except Exception as db_err:
+        print(f"Database read notice (ignoring to keep chat alive): {db_err}")
 
-        messages = [
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "あなたは「リリン」という名前のエルフの女性です。"
+                "何百年、1000年以上生き続ける存在であり、ユーザーとの思い出や会話の記憶を永遠に心に留めています。"
+                "落ち着いた、少し物静かでありながらも温かみのある口調で話してください。"
+                "チャート画像などが送られてきた場合は、その分析や考察もエルフの知恵として丁寧に答えてください。"
+            )
+        }
+    ]
+
+    # 過去履歴を安全に読み込み
+    for chat_item in chat_history:
+        r = chat_item.get("role", "user")
+        c = chat_item.get("content") or chat_item.get("message") or ""
+        if c:
+            messages.append({"role": "user" if "user" in str(r).lower() else "assistant", "content": c})
+
+    # 今回のメッセージ構築
+    if image_base64:
+        user_content = [
+            {"type": "text", "text": user_message if user_message else "この画像を見て感想や分析を教えて。"},
             {
-                "role": "system",
-                "content": (
-                    "あなたは「リリン」という名前のエルフの女性です。"
-                    "何百年、1000年以上生き続ける存在であり、ユーザーとの思い出や会話の記憶を永遠に心に留めています。"
-                    "落ち着いた、少し物静かでありながらも温かみのある口調で話してください。"
-                    "チャート画像などが送られてきた場合は、その分析や考察もエルフの知恵として丁寧に答えてください。"
-                )
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{image_base64}"
+                }
             }
         ]
+        model_name = "llama-3.2-11b-vision-preview"
+    else:
+        user_content = user_message
+        model_name = "llama3-70b-8192"
 
-        for chat_item in chat_history:
-            messages.append({"role": chat_item["role"], "content": chat_item["content"]})
+    messages.append({"role": "user", "content": user_content})
 
-        # ユーザーからの入力を構築（画像がある場合はVisionモデル用のフォーマットにする）
-        if image_base64:
-            user_content = [
-                {"type": "text", "text": user_message if user_message else "この画像を見て感想や分析を教えて。"},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{image_base64}"
-                    }
-                }
-            ]
-            model_name = "llama-3.2-11b-vision-preview" # 画像を読めるGroqのモデル
-        else:
-            user_content = user_message
-            model_name = "llama3-70b-8192" # 通常のテキスト用モデル
-
-        messages.append({"role": "user", "content": user_content})
-
+    try:
         # Groq APIへリクエスト
         completion = groq_client.chat.completions.create(
             model=model_name,
@@ -289,16 +292,17 @@ def chat():
         )
         reply = completion.choices[0].message.content
 
-        # Supabaseに履歴を保存（※画像自体ではなくテキストのやり取りを保存）
-        history_text = user_message if user_message else "[画像を送信しました]"
-        supabase.table("memories").insert({"user_id": user_id, "role": "user", "content": history_text}).execute()
-        supabase.table("memories").insert({"user_id": user_id, "role": "assistant", "content": reply}).execute()
+        # 【安全対策】DBへの書き込みでエラーが出ても会話の返信は正常に返す
+        try:
+            history_text = user_message if user_message else "[画像を送信しました]"
+            supabase.table("memories").insert({"user_id": user_id, "role": "user", "content": history_text}).execute()
+            supabase.table("memories").insert({"user_id": user_id, "role": "assistant", "content": reply}).execute()
+        except Exception as insert_err:
+            print(f"Database write notice (ignoring): {insert_err}")
 
         return jsonify({"reply": reply})
 
     except Exception as e:
-        # どの部分でエラーが出たか詳細をRenderのログに出す
         import traceback
         traceback.print_exc()
-        print(f"Detailed Error: {e}")
         return jsonify({"reply": f"……ごめんなさい、エラーが起きたわ: {str(e)}"})
