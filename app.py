@@ -309,12 +309,12 @@ def chat():
         history_save_text = user_message
 
     try:
-        # max_tokensを指定して出力制限（1000制限回避）
+        # 出力上限を800トークンに引き上げ
         completion = groq_client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.7,
-            max_tokens=400,
+            max_tokens=800,
         )
         reply = completion.choices[0].message.content
 
