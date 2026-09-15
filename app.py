@@ -13,7 +13,6 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 画像対応モデル（動作確認済みのQwen）
 MODEL_NAME = "qwen/qwen3.8-27b"
 
 HTML_TEMPLATE = """
@@ -131,10 +130,10 @@ HTML_TEMPLATE = """
     <header>リリン - 永遠の記憶</header>
     
     <div id="chat-container">
-        <div class="message assistant">……よく来てくれたわね。今日もあなたとお話しできるのを楽しみにしていたわ。写真を見せたいときは、左の「＋」ボタンから送ってちょうだい。</div>
+        <div class="message assistant">……よく来てくれたわね。今日もあなたとお話しできるのを楽しみにしていたわ。</div>
     </div>
 
-    <div id="file-preview" id="file-preview">📎 画像が選択されています</div>
+    <div id="file-preview">📎 画像が選択されています</div>
 
     <div id="input-container">
         <input type="file" id="image-input" accept="image/*" style="display: none;">
@@ -247,7 +246,6 @@ def chat():
     mime_type = data.get("mime_type")
     user_id = "web_user_default"
 
-    # 1. 履歴の取得
     chat_history = []
     try:
         response = supabase.table("memories").select("*").eq("user_id", user_id).order("created_at", desc=False).execute()
@@ -256,7 +254,6 @@ def chat():
     except Exception as db_err:
         print(f"Database read notice: {db_err}")
 
-    # 2. 記憶の圧縮（フローレンス風）
     summary_memory = ""
     recent_messages = chat_history
     
@@ -273,12 +270,12 @@ def chat():
                     {"role": "user", "content": old_text}
                 ],
                 temperature=0.3,
+                max_tokens=300,
             )
             summary_memory = summary_completion.choices[0].message.content
         except Exception as sum_err:
             print(f"Summary notice: {sum_err}")
 
-    # 3. システムプロンプトの構築
     system_prompt = (
         "あなたは「リリン」という名前の女性です。"
         "ユーザーの良き理解者であり、これまでの思い出や会話の記憶を大切に心に留めています。"
@@ -295,7 +292,6 @@ def chat():
         if c:
             messages.append({"role": "user" if "user" in str(r).lower() else "assistant", "content": c})
 
-    # 4. 画像が含まれている場合のマルチモーダル処理
     if image_base64:
         user_content = [
             {"type": "text", "text": user_message if user_message else "この画像を見て感想や意見を教えて。"},
@@ -313,14 +309,15 @@ def chat():
         history_save_text = user_message
 
     try:
+        # max_tokensを指定して出力制限（1000制限回避）
         completion = groq_client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.7,
+            max_tokens=400,
         )
         reply = completion.choices[0].message.content
 
-        # 5. データベースへ保存
         try:
             supabase.table("memories").insert({"user_id": user_id, "role": "user", "content": history_save_text}).execute()
             supabase.table("memories").insert({"user_id": user_id, "role": "assistant", "content": reply}).execute()
