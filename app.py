@@ -263,7 +263,7 @@ def chat():
         if c:
             messages.append({"role": "user" if "user" in str(r).lower() else "assistant", "content": c})
 
-    # 現在現役のモデル名に更新
+    # 最新の現役モデル名に更新
     if image_base64:
         user_content = [
             {"type": "text", "text": user_message if user_message else "この画像を見て感想や分析を教えて。"},
@@ -277,7 +277,7 @@ def chat():
         model_name = "llama-3.2-11b-vision-preview"
     else:
         user_content = user_message
-        model_name = "llama-3.1-70b-versatile" # 現役の高速かつ高性能なテキストモデルに変更
+        model_name = "llama-3.3-70b-versatile" # 最新のLlama 3.3モデルに変更
 
     messages.append({"role": "user", "content": user_content})
 
