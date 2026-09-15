@@ -297,9 +297,8 @@ def chat():
         return jsonify({"reply": reply})
 
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"reply": "……ごめんなさい、うまく頭が回らなかったみたい。もう一度試してくれる？"})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+        # どの部分でエラーが出たか詳細をRenderのログに出す
+        import traceback
+        traceback.print_exc()
+        print(f"Detailed Error: {e}")
+        return jsonify({"reply": f"……ごめんなさい、エラーが起きたわ: {str(e)}"})
