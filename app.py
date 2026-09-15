@@ -238,13 +238,12 @@ def chat():
     user_id = "web_user_default"
 
     chat_history = []
-    # 【安全対策】Supabaseの構造が違ってエラーが出ても、チャット自体が止まらないように保護しています
     try:
         response = supabase.table("memories").select("*").eq("user_id", user_id).limit(10).execute()
         if response.data:
             chat_history = response.data
     except Exception as db_err:
-        print(f"Database read notice (ignoring to keep chat alive): {db_err}")
+        print(f"Database read notice: {db_err}")
 
     messages = [
         {
@@ -258,14 +257,13 @@ def chat():
         }
     ]
 
-    # 過去履歴を安全に読み込み
     for chat_item in chat_history:
         r = chat_item.get("role", "user")
         c = chat_item.get("content") or chat_item.get("message") or ""
         if c:
             messages.append({"role": "user" if "user" in str(r).lower() else "assistant", "content": c})
 
-    # 今回のメッセージ構築
+    # 現在現役のモデル名に更新
     if image_base64:
         user_content = [
             {"type": "text", "text": user_message if user_message else "この画像を見て感想や分析を教えて。"},
@@ -279,12 +277,11 @@ def chat():
         model_name = "llama-3.2-11b-vision-preview"
     else:
         user_content = user_message
-        model_name = "llama3-70b-8192"
+        model_name = "llama-3.1-70b-versatile" # 現役の高速かつ高性能なテキストモデルに変更
 
     messages.append({"role": "user", "content": user_content})
 
     try:
-        # Groq APIへリクエスト
         completion = groq_client.chat.completions.create(
             model=model_name,
             messages=messages,
@@ -292,13 +289,12 @@ def chat():
         )
         reply = completion.choices[0].message.content
 
-        # 【安全対策】DBへの書き込みでエラーが出ても会話の返信は正常に返す
         try:
             history_text = user_message if user_message else "[画像を送信しました]"
             supabase.table("memories").insert({"user_id": user_id, "role": "user", "content": history_text}).execute()
             supabase.table("memories").insert({"user_id": user_id, "role": "assistant", "content": reply}).execute()
         except Exception as insert_err:
-            print(f"Database write notice (ignoring): {insert_err}")
+            print(f"Database write notice: {insert_err}")
 
         return jsonify({"reply": reply})
 
