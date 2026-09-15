@@ -13,7 +13,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-MODEL_NAME = "qwen/qwen3.8-27b"
+MODEL_NAME = "openai/gpt-oss-120b"
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
