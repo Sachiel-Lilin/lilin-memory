@@ -259,11 +259,11 @@ def chat():
     user_message = data.get("message", "")
     image_base64 = data.get("image")
     mime_type = data.get("mime_type")
-    user_id = "web_user_default"
 
+    # Supabaseからすべての記憶を取得（id順）
     chat_history = []
     try:
-        response = supabase.table("memories").select("*").eq("user_id", user_id).order("created_at", desc=False).execute()
+        response = supabase.table("memories").select("*").order("created_at", desc=False).execute()
         if response.data:
             chat_history = response.data
     except Exception as db_err:
@@ -272,10 +272,11 @@ def chat():
     summary_memory = ""
     recent_messages = chat_history
     
+    # 履歴が10件を超えた場合の要約処理
     if len(chat_history) > 10:
         old_items = chat_history[:-6]
         recent_messages = chat_history[-6:]
-        old_text = "\n".join([f"{item.get('role')}: {item.get('content')}" for item in old_items])
+        old_text = "\n".join([item.get('content', '') for item in old_items])
         
         try:
             summary_completion = groq_client.chat.completions.create(
@@ -291,7 +292,7 @@ def chat():
         except Exception as sum_err:
             print(f"Summary notice: {sum_err}")
 
-    # --- 条件付きWeb検索のトリガー判定 ---
+    # 条件付きWeb検索のトリガー判定
     search_context = ""
     trigger_keywords = ["最新", "今日", "ニュース", "天気", "株価", "速報", "現在", "今"]
     if any(kw in user_message for kw in trigger_keywords):
@@ -312,12 +313,18 @@ def chat():
 
     messages = [{"role": "system", "content": system_prompt}]
 
+    # 過去のやり取りをメッセージリストに反映
     for chat_item in recent_messages:
-        r = chat_item.get("role", "user")
-        c = chat_item.get("content", "")
-        if c:
-            messages.append({"role": "user" if "user" in str(r).lower() else "assistant", "content": c})
+        content = chat_item.get("content", "")
+        if content:
+            if content.startswith("サキエル:"):
+                messages.append({"role": "user", "content": content.replace("サキエル:", "").strip()})
+            elif content.startswith("リリン:"):
+                messages.append({"role": "assistant", "content": content.replace("リリン:", "").strip()})
+            else:
+                messages.append({"role": "user", "content": content})
 
+    # 今回のユーザー入力を組み立て
     if image_base64:
         user_content = [
             {"type": "text", "text": user_message if user_message else "この画像を見て感想や意見を教えて。"},
@@ -343,9 +350,10 @@ def chat():
         )
         reply = completion.choices[0].message.content
 
+        # Supabaseへの書き込み（content列のみのシンプルな構造に対応）
         try:
-            supabase.table("memories").insert({"user_id": user_id, "role": "user", "content": history_save_text}).execute()
-            supabase.table("memories").insert({"user_id": user_id, "role": "assistant", "content": reply}).execute()
+            supabase.table("memories").insert({"content": f"サキエル: {history_save_text}"}).execute()
+            supabase.table("memories").insert({"content": f"リリン: {reply}"}).execute()
         except Exception as insert_err:
             print(f"Database write notice: {insert_err}")
 
