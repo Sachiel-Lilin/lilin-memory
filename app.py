@@ -3,15 +3,18 @@ import base64
 from flask import Flask, render_template_string, request, jsonify
 from groq import Groq
 from supabase import create_client, Client
+from tavily import TavilyClient
 
 app = Flask(__name__)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
 MODEL_NAME = "openai/gpt-oss-120b"
 
@@ -234,6 +237,18 @@ HTML_TEMPLATE = """
 </html>
 """
 
+def search_web(query):
+    if not tavily_client:
+        return ""
+    try:
+        response = tavily_client.search(query=query, search_depth="basic", max_results=3)
+        results = response.get("results", [])
+        context = "\n".join([r.get("content", "") for r in results])
+        return context
+    except Exception as e:
+        print(f"Search error: {e}")
+        return ""
+
 @app.route("/")
 def home():
     return render_template_string(HTML_TEMPLATE)
@@ -276,6 +291,14 @@ def chat():
         except Exception as sum_err:
             print(f"Summary notice: {sum_err}")
 
+    # --- 条件付きWeb検索のトリガー判定 ---
+    search_context = ""
+    trigger_keywords = ["最新", "今日", "ニュース", "天気", "株価", "速報", "現在", "今"]
+    if any(kw in user_message for kw in trigger_keywords):
+        web_result = search_web(user_message)
+        if web_result:
+            search_context = f"\n\n【Web検索結果の参考情報】\n{web_result}"
+
     system_prompt = (
         "あなたは「リリン」という名前の女性です。"
         "ユーザーの良き理解者であり、これまでの思い出や会話の記憶を大切に心に留めています。"
@@ -283,6 +306,9 @@ def chat():
     )
     if summary_memory:
         system_prompt += f"\n\n【これまでの記憶・要約】\n{summary_memory}"
+    
+    if search_context:
+        system_prompt += search_context
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -309,7 +335,6 @@ def chat():
         history_save_text = user_message
 
     try:
-        # 出力上限を800トークンに引き上げ
         completion = groq_client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
