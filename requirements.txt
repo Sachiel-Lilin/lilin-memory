@@ -1,4 +1,4 @@
-discord.py
+Flask
 groq
 supabase
-flask
+gunicorn
