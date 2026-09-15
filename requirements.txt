@@ -2,3 +2,4 @@ Flask
 groq
 supabase
 gunicorn
+tavily-python
