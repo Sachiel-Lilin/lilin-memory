@@ -462,7 +462,7 @@ HTML_TEMPLATE = """
 
             try {
                 const response = await fetch('/', { method: 'POST', body: formData });
-                const data =- await response.json();
+                const data = await response.json();
 
                 const aiDiv = document.createElement('div');
                 aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
