@@ -18,7 +18,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 USER_ID = "web_user_default"
 
 # ==========================================
-# 2. Supabase 側でのデータ入出力関数（エラー可視化版）
+# 2. Supabase 側でのデータ入出力関数
 # ==========================================
 def load_memories_from_supabase() -> list:
     """Supabaseの memories テーブルから会話履歴を読み込む"""
@@ -27,7 +27,6 @@ def load_memories_from_supabase() -> list:
             .select("role, content") \
             .eq("user_id", USER_ID) \
             .order("created_at", desc=False) \
-            .limit(20) \
             .execute()
         
         history = []
@@ -40,7 +39,7 @@ def load_memories_from_supabase() -> list:
                 history.append({"role": role, "content": content})
         return history
     except Exception as e:
-        print(f"【DB読み込みエラー】: {e}")
+        print(f"履歴読み込みエラー: {e}")
         return []
 
 def save_memory_to_supabase(role: str, content: str):
@@ -49,14 +48,13 @@ def save_memory_to_supabase(role: str, content: str):
         if not isinstance(content, str):
             content = str(content)
             
-        res = supabase.table("memories").insert({
+        supabase.table("memories").insert({
             "user_id": USER_ID,
             "role": role,
             "content": content
         }).execute()
-        print(f"【DB保存成功】 {role}: {content[:30]}...")
     except Exception as e:
-        print(f"【DB保存エラー】: {e}")
+        print(f"履歴保存エラー: {e}")
 
 # ==========================================
 # 3. HTML テンプレート（モバイルファースト）
@@ -169,17 +167,14 @@ def index():
         user_message = request.form.get("message", "")
         uploaded_files = request.files.getlist("images")
 
-        # データベースから履歴をロード
         db_history = load_memories_from_supabase()
 
-        # Groq送信用メッセージの構築（確実にstringに変換）
         groq_messages = []
         for msg in db_history:
             role = str(msg.get("role", "user"))
             content = str(msg.get("content", ""))
             groq_messages.append({"role": role, "content": content})
 
-        # 今回のユーザー入力（マルチモーダル対応）
         current_content = []
         if user_message:
             current_content.append({"type": "text", "text": user_message})
@@ -201,10 +196,8 @@ def index():
         if not current_content:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # 今回のメッセージをGroq配列に追加
         groq_messages.append({"role": "user", "content": current_content if has_images else user_message})
 
-        # システムプロンプト
         system_prompt = {
             "role": "system", 
             "content": "あなたは咲鳥リン（さきとりりん）です。ユーザーをサキエルと呼びます。落ち着いた温かみのある良き理解者として、丁寧かつ知的な口調で応答してください。"
@@ -212,7 +205,6 @@ def index():
         payload = [system_prompt] + groq_messages
 
         try:
-            # Groq API呼び出し
             completion = client.chat.completions.create(
                 model="openai/gpt-oss-120b",
                 messages=payload,
@@ -221,7 +213,6 @@ def index():
             )
             ai_reply = completion.choices[0].message.content
 
-            # データベースへ保存
             db_user_content = user_message + (" [画像送信]" if has_images else "")
             save_memory_to_supabase("user", db_user_content)
             save_memory_to_supabase("assistant", ai_reply)
@@ -229,10 +220,8 @@ def index():
             return jsonify({"status": "success", "reply": ai_reply})
 
         except Exception as e:
-            print(f"【Groq API エラー】: {str(e)}")
             return jsonify({"status": "error", "error": f"Error: {str(e)}"})
 
-    # GETアクセス時
     history = load_memories_from_supabase()
     return render_template_string(HTML_TEMPLATE, history=history)
 
