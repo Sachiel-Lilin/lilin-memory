@@ -32,11 +32,9 @@ def load_memories_from_supabase() -> list:
             for row in response.data:
                 raw_content = row.get("content", "")
                 
-                # どんなデータが入っていても必ず強制的に文字列化する
                 if not isinstance(raw_content, str):
                     raw_content = str(raw_content)
                 
-                # "role: 本文" の形式からロールとテキストを復元
                 if raw_content.startswith("user: "):
                     role = "user"
                     content_text = raw_content[6:]
@@ -47,7 +45,6 @@ def load_memories_from_supabase() -> list:
                     role = "user"
                     content_text = raw_content
                 
-                # 二重安全：contentも必ず文字列にする
                 history.append({"role": role, "content": str(content_text)})
                     
         return history
@@ -56,7 +53,7 @@ def load_memories_from_supabase() -> list:
         return []
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに文字列として保存する（画像バイナリは除外し、メタデータのみ記録）"""
+    """Supabaseの memories テーブルに文字列として保存する"""
     try:
         if not isinstance(content, str):
             content = str(content)
@@ -70,7 +67,7 @@ def save_memory_to_supabase(role: str, content: str):
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 3. HTML テンプレート（モバイル最適化・スクロール位置改善）
+# 3. HTML テンプレート（画像プレビュー機能追加）
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -122,18 +119,46 @@ HTML_TEMPLATE = """
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
         .error { background: #4a2b2b; align-self: center; color: #ff8080; }
         
+        /* プレビュー領域のスタイル */
+        #preview-container {
+            display: flex;
+            gap: 8px;
+            padding: 0 10px;
+            margin-bottom: 4px;
+            flex-wrap: wrap;
+        }
+        .preview-thumb-wrapper {
+            position: relative;
+            width: 60px;
+            height: 60px;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid #444;
+            background: #222;
+        }
+        .preview-thumb-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
         form { 
             background: #1f1f1f; 
             padding: 10px; 
             display: flex; 
-            gap: 8px; 
-            align-items: center; 
+            flex-direction: column;
             border-top: 1px solid #333; 
             flex-shrink: 0;
             position: sticky;
             bottom: 0;
             width: 100%;
             z-index: 10;
+        }
+        .form-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            width: 100%;
         }
         input[type="text"] { 
             flex: 1; 
@@ -166,7 +191,6 @@ HTML_TEMPLATE = """
             white-space: nowrap;
         }
         button[type="submit"]:hover { background: #e6c555; }
-        #file-count { font-size: 12px; color: #888; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -176,32 +200,49 @@ HTML_TEMPLATE = """
             <div class="message {{ msg.role }}">{{ msg.content }}</div>
         {% endfor %}
     </div>
+    
     <form id="chat-form" enctype="multipart/form-data">
-        <label class="file-label" for="images">＋画像</label>
-        <input type="file" id="images" name="images" accept="image/*" multiple onchange="updateFileCount()">
-        <span id="file-count"></span>
-        <input type="text" id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off">
-        <button type="submit">送信</button>
+        <div id="preview-container"></div>
+        <div class="form-row">
+            <label class="file-label" for="images">＋画像</label>
+            <input type="file" id="images" name="images" accept="image/*" multiple onchange="handleFileSelect(event)">
+            <input type="text" id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off">
+            <button type="submit">送信</button>
+        </div>
     </form>
 
     <script>
         const chatContainer = document.getElementById('chat-container');
-        // 初回ロード時は一番下にスクロール
         chatContainer.scrollTop = chatContainer.scrollHeight;
 
-        function updateFileCount() {
-            const input = document.getElementById('images');
-            const countSpan = document.getElementById('file-count');
+        function handleFileSelect(event) {
+            const input = event.target;
+            const previewContainer = document.getElementById('preview-container');
+            previewContainer.innerHTML = '';
+
             if (input.files.length > 0) {
                 if (input.files.length > 2) {
                     alert("一度に送信できる画像は最大2枚までです。");
                     input.value = "";
-                    countSpan.textContent = '';
                     return;
                 }
-                countSpan.textContent = `${input.files.length}枚`;
-            } else {
-                countSpan.textContent = '';
+
+                for (let i = 0; i < input.files.length; i++) {
+                    const file = input.files[i];
+                    const reader = new FileReader();
+
+                    reader.onload = function(e) {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'preview-thumb-wrapper';
+                        
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        
+                        wrapper.appendChild(img);
+                        previewContainer.appendChild(wrapper);
+                    }
+                    reader.readAsDataURL(file);
+                }
             }
         }
 
@@ -219,9 +260,10 @@ HTML_TEMPLATE = """
             const userText = msgInput.value;
             const fileCount = fileInput.files.length;
             
+            // フォームをリセットし、プレビューもクリア
             msgInput.value = '';
             fileInput.value = '';
-            document.getElementById('file-count').textContent = '';
+            document.getElementById('preview-container').innerHTML = '';
 
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
@@ -238,7 +280,6 @@ HTML_TEMPLATE = """
                 aiDiv.textContent = data.reply || data.error;
                 chatContainer.appendChild(aiDiv);
 
-                // 【改善】回答の「最初（上端）」が画面の上部に位置するようにスクロールする
                 aiDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             } catch (err) {
@@ -265,14 +306,12 @@ def index():
 
         db_history = load_memories_from_supabase()
 
-        # Groqへ送る過去のテキスト履歴を構築
         groq_messages = []
         for msg in db_history:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
             groq_messages.append({"role": r, "content": c})
 
-        # 有効な添付ファイルの確認（最大2枚に制限）とBase64エンコード
         valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
         image_contents = []
         
@@ -292,13 +331,11 @@ def index():
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # DB保存用のメタデータ文字列を作成
         db_save_message = final_user_message
         if valid_files:
             file_names = [f.filename for f in valid_files]
             db_save_message += f" [画像添付: {', '.join(file_names)}]"
 
-        # 今回のユーザーメッセージの構築（画像がある場合はマルチモーダル構造）
         if image_contents:
             current_content_payload = []
             if final_user_message:
@@ -322,7 +359,6 @@ def index():
             )
         }
         
-        # 最終的な送信ペイロードの組み立て
         safe_payload = [system_prompt]
         for m in groq_messages:
             safe_payload.append({
@@ -340,7 +376,6 @@ def index():
             )
             ai_reply = str(completion.choices[0].message.content)
 
-            # データベースへは画像バイナリを含めず、メタデータ付きのテキストとして安全に保存
             save_memory_to_supabase("user", db_save_message)
             save_memory_to_supabase("assistant", ai_reply)
 
