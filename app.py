@@ -12,6 +12,15 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
 # 新しいGoogle Gen AI SDKの初期化
 client = genai.Client(api_key=gemini_api_key)
+        # 現在のAPIキーで利用可能なモデルをリストアップしてログに出力
+        try:
+            print("=== 利用可能なモデル一覧 ===")
+            for m in client.models.list():
+                print(f"Model Name: {m.name}")
+            print("============================")
+        except Exception as list_err:
+            print(f"モデル一覧の取得に失敗: {list_err}")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # 履歴の読み込み（Supabaseから取得）
