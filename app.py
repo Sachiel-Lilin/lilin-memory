@@ -70,31 +70,103 @@ def save_memory_to_supabase(role: str, content: str):
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 3. HTML テンプレート（モバイルファースト）
+# 3. HTML テンプレート（モバイル最適化・スクロール位置改善）
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>咲鳥りん (リリン)</title>
     <style>
-        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
-        header { background: #1f1f1f; padding: 15px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; }
-        #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .message { padding: 10px 14px; border-radius: 8px; max-width: 80%; line-height: 1.5; word-break: break-all; white-space: pre-wrap; }
+        * { box-sizing: border-box; }
+        body { 
+            background-color: #121212; 
+            color: #e0e0e0; 
+            font-family: sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            height: 100dvh; 
+            display: flex; 
+            flex-direction: column; 
+            overflow: hidden;
+        }
+        header { 
+            background: #1f1f1f; 
+            padding: 12px; 
+            text-align: center; 
+            font-weight: bold; 
+            border-bottom: 1px solid #333; 
+            color: #d4af37; 
+            flex-shrink: 0;
+        }
+        #chat-container { 
+            flex: 1; 
+            overflow-y: auto; 
+            padding: 15px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 12px; 
+            -webkit-overflow-scrolling: touch;
+        }
+        .message { 
+            padding: 12px 16px; 
+            border-radius: 8px; 
+            max-width: 90%; 
+            line-height: 1.5; 
+            word-break: break-all; 
+            white-space: pre-wrap; 
+        }
         .user { background: #2b3a4a; align-self: flex-end; }
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
         .error { background: #4a2b2b; align-self: center; color: #ff8080; }
-        form { background: #1f1f1f; padding: 10px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #333; }
-        input[type="text"] { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #fff; }
+        
+        form { 
+            background: #1f1f1f; 
+            padding: 10px; 
+            display: flex; 
+            gap: 8px; 
+            align-items: center; 
+            border-top: 1px solid #333; 
+            flex-shrink: 0;
+            position: sticky;
+            bottom: 0;
+            width: 100%;
+            z-index: 10;
+        }
+        input[type="text"] { 
+            flex: 1; 
+            padding: 10px; 
+            border-radius: 4px; 
+            border: 1px solid #444; 
+            background: #2a2a2a; 
+            color: #fff; 
+            font-size: 16px; 
+        }
         input[type="file"] { display: none; }
-        .file-label { background: #333; color: #ccc; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .file-label { 
+            background: #333; 
+            color: #ccc; 
+            padding: 8px 12px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 14px; 
+            white-space: nowrap;
+        }
         .file-label:hover { background: #444; }
-        button { background: #d4af37; color: #121212; border: none; padding: 10px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
-        button:hover { background: #e6c555; }
-        #file-count { font-size: 12px; color: #888; }
+        button[type="submit"] { 
+            background: #d4af37; 
+            color: #121212; 
+            border: none; 
+            padding: 10px 16px; 
+            border-radius: 4px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            white-space: nowrap;
+        }
+        button[type="submit"]:hover { background: #e6c555; }
+        #file-count { font-size: 12px; color: #888; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -114,12 +186,19 @@ HTML_TEMPLATE = """
 
     <script>
         const chatContainer = document.getElementById('chat-container');
+        // 初回ロード時は一番下にスクロール
         chatContainer.scrollTop = chatContainer.scrollHeight;
 
         function updateFileCount() {
             const input = document.getElementById('images');
             const countSpan = document.getElementById('file-count');
             if (input.files.length > 0) {
+                if (input.files.length > 2) {
+                    alert("一度に送信できる画像は最大2枚までです。");
+                    input.value = "";
+                    countSpan.textContent = '';
+                    return;
+                }
                 countSpan.textContent = `${input.files.length}枚`;
             } else {
                 countSpan.textContent = '';
@@ -158,12 +237,16 @@ HTML_TEMPLATE = """
                 aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
                 aiDiv.textContent = data.reply || data.error;
                 chatContainer.appendChild(aiDiv);
-                chatContainer.scrollTop = chatContainer.scrollHeight;
+
+                // 【改善】回答の「最初（上端）」が画面の上部に位置するようにスクロールする
+                aiDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
             } catch (err) {
                 const errDiv = document.createElement('div');
                 errDiv.className = 'message error';
                 errDiv.textContent = '通信エラーが発生しました。';
                 chatContainer.appendChild(errDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
             }
         });
     </script>
@@ -189,8 +272,8 @@ def index():
             c = str(msg.get("content", ""))
             groq_messages.append({"role": r, "content": c})
 
-        # 有効な添付ファイルの確認とBase64エンコード
-        valid_files = [f for f in uploaded_files if f and f.filename != '']
+        # 有効な添付ファイルの確認（最大2枚に制限）とBase64エンコード
+        valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
         image_contents = []
         
         for f in valid_files:
