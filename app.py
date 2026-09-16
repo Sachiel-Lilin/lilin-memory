@@ -17,10 +17,10 @@ client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================
-# 2. Supabase 側でのデータ入出力関数（完全文字列化保証）
+# 2. Supabase 側でのデータ入出力関数
 # ==========================================
 def load_memories_from_supabase() -> list:
-    """Supabaseの memories テーブルから会話履歴を安全に読み込む"""
+    """Supabaseの memories テーブルから会話履歴を読み込む"""
     try:
         response = supabase.table("memories") \
             .select("content, created_at") \
@@ -31,7 +31,6 @@ def load_memories_from_supabase() -> list:
         if response.data:
             for row in response.data:
                 raw_content = row.get("content", "")
-                
                 if not isinstance(raw_content, str):
                     raw_content = str(raw_content)
                 
@@ -67,7 +66,7 @@ def save_memory_to_supabase(role: str, content: str):
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 3. HTML テンプレート（画像プレビュー機能追加）
+# 3. HTML テンプレート（スレッド内画像サムネイル表示対応）
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -119,6 +118,21 @@ HTML_TEMPLATE = """
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
         .error { background: #4a2b2b; align-self: center; color: #ff8080; }
         
+        /* スレッド内の画像サムネイル */
+        .msg-image-container {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .msg-thumb {
+            width: 80px;
+            height: 80px;
+            border-radius: 4px;
+            object-fit: cover;
+            border: 1px solid #444;
+        }
+
         /* プレビュー領域のスタイル */
         #preview-container {
             display: flex;
@@ -197,7 +211,9 @@ HTML_TEMPLATE = """
     <header>咲鳥りん (リリン)</header>
     <div id="chat-container">
         {% for msg in history %}
-            <div class="message {{ msg.role }}">{{ msg.content }}</div>
+            <div class="message {{ msg.role }}">
+                {{ msg.content | safe }}
+            </div>
         {% endfor %}
     </div>
     
@@ -215,10 +231,13 @@ HTML_TEMPLATE = """
         const chatContainer = document.getElementById('chat-container');
         chatContainer.scrollTop = chatContainer.scrollHeight;
 
+        let selectedFilesBase64 = [];
+
         function handleFileSelect(event) {
             const input = event.target;
             const previewContainer = document.getElementById('preview-container');
             previewContainer.innerHTML = '';
+            selectedFilesBase64 = [];
 
             if (input.files.length > 0) {
                 if (input.files.length > 2) {
@@ -232,11 +251,14 @@ HTML_TEMPLATE = """
                     const reader = new FileReader();
 
                     reader.onload = function(e) {
+                        const base64Data = e.target.result;
+                        selectedFilesBase64.push(base64Data);
+
                         const wrapper = document.createElement('div');
                         wrapper.className = 'preview-thumb-wrapper';
                         
                         const img = document.createElement('img');
-                        img.src = e.target.result;
+                        img.src = base64Data;
                         
                         wrapper.appendChild(img);
                         previewContainer.appendChild(wrapper);
@@ -258,16 +280,34 @@ HTML_TEMPLATE = """
             }
 
             const userText = msgInput.value;
-            const fileCount = fileInput.files.length;
+            const currentImages = [...selectedFilesBase64];
             
-            // フォームをリセットし、プレビューもクリア
+            // フォームとプレビューをリセット
             msgInput.value = '';
             fileInput.value = '';
+            selectedFilesBase64 = [];
             document.getElementById('preview-container').innerHTML = '';
 
+            // ユーザーメッセージの吹き出しを作成（テキスト ＋ サムネイル画像）
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
-            userDiv.textContent = userText + (fileCount > 0 ? ` [画像添付: ${fileCount}枚]` : '');
+            
+            const textSpan = document.createElement('div');
+            textSpan.textContent = userText;
+            userDiv.appendChild(textSpan);
+
+            if (currentImages.length > 0) {
+                const imgContainer = document.createElement('div');
+                imgContainer.className = 'msg-image-container';
+                currentImages.forEach(imgSrc => {
+                    const thumb = document.createElement('img');
+                    thumb.className = 'msg-thumb';
+                    thumb.src = imgSrc;
+                    imgContainer.appendChild(thumb);
+                });
+                userDiv.appendChild(imgContainer);
+            }
+
             chatContainer.appendChild(userDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
 
@@ -314,27 +354,32 @@ def index():
 
         valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
         image_contents = []
+        db_image_tags = []
         
         for f in valid_files:
             file_bytes = f.read()
             encoded_image = base64.b64encode(file_bytes).decode('utf-8')
             mime_type = f.content_type or 'image/jpeg'
             
+            data_url = f"data:{mime_type};base64,{encoded_image}"
+            
             image_contents.append({
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:{mime_type};base64,{encoded_image}"
+                    "url": data_url
                 }
             })
+            # DBに保存する際、HTMLタグ（<img>）として履歴に埋め込めるようにする
+            db_image_tags.append(f'<img class="msg-thumb" src="{data_url}">')
 
         final_user_message = str(user_message).strip()
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
+        # DB保存用のテキスト構築
         db_save_message = final_user_message
-        if valid_files:
-            file_names = [f.filename for f in valid_files]
-            db_save_message += f" [画像添付: {', '.join(file_names)}]"
+        if db_image_tags:
+            db_save_message += f'<div class="msg-image-container">{"".join(db_image_tags)}</div>'
 
         if image_contents:
             current_content_payload = []
