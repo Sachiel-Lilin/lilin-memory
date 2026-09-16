@@ -1,4 +1,5 @@
-flask
+Flask
 google-genai
 supabase
+tavily-python
 gunicorn
