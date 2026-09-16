@@ -1,5 +1,4 @@
 import os
-import base64
 from flask import Flask, render_template_string, request, jsonify
 from groq import Groq
 from supabase import create_client, Client
@@ -56,7 +55,7 @@ def load_memories_from_supabase() -> list:
         return []
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに文字列として保存する（画像データは除外し、添付情報のみ記録）"""
+    """Supabaseの memories テーブルに文字列として保存する（画像バイナリは除外し、メタデータのみ記録）"""
     try:
         if not isinstance(content, str):
             content = str(content)
@@ -182,51 +181,36 @@ def index():
 
         db_history = load_memories_from_supabase()
 
-        # Groqへ送る過去のテキスト履歴を構築
+        # Groqへ送る過去のテキスト履歴を確実に文字列で構築
         groq_messages = []
         for msg in db_history:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
             groq_messages.append({"role": r, "content": c})
 
-        # 画像データの処理（API送信にはマルチモーダル形式を使い、DB保存にはメタデータのみを使用）
-        image_contents = []
+        # 有効な添付ファイルの確認
         valid_files = [f for f in uploaded_files if f and f.filename != '']
         
-        for f in valid_files:
-            file_bytes = f.read()
-            encoded_image = base64.b64encode(file_bytes).decode('utf-8')
-            mime_type = f.content_type or 'image/jpeg'
-            
-            # Groq（ビジョン対応モデル）が読み込める形式
-            image_contents.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{encoded_image}"
-                }
-            })
-
-        final_user_message = str(user_message)
-        if not final_user_message.strip() and not valid_files:
+        final_user_message = str(user_message).strip()
+        if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # DB保存用の文字列（画像バイナリは含めず、どのような画像が添付されたかのメタデータのみを記録）
+        # 画像が添付されている場合、メタデータをテキストとしてメッセージに付与する
         db_save_message = final_user_message
         if valid_files:
             file_names = [f.filename for f in valid_files]
-            db_save_message += f" [画像添付: {', '.join(file_names)}]"
-
-        # 今回のユーザーメッセージをGroq用ペイロードに組み立て
-        # 画像がある場合はマルチモーダル用のリスト構造、ない場合は通常のテキスト構造にする
-        if image_contents:
-            current_content_payload = []
-            if final_user_message.strip():
-                current_content_payload.append({"type": "text", "text": final_user_message})
-            current_content_payload.extend(image_contents)
-            
-            current_message_for_groq = {"role": "user", "content": current_content_payload}
+            attachment_text = f" [画像添付: {', '.join(file_names)}]"
+            if final_user_message:
+                final_user_message += attachment_text
+            else:
+                final_user_message = f"画像を添付しました。{attachment_text}"
+            db_save_message = final_user_message
         else:
-            current_message_for_groq = {"role": "user", "content": final_user_message}
+            if not final_user_message:
+                return jsonify({"status": "error", "error": "メッセージを入力してください。"})
+
+        # 今回のユーザーメッセージをGroq用ペイロードに追加（必ず文字列）
+        groq_messages.append({"role": "user", "content": str(final_user_message)})
 
         system_prompt = {
             "role": "system", 
@@ -241,25 +225,24 @@ def index():
             )
         }
         
-        # 最終的な送信ペイロードの組み立て
+        # 最終的な送信ペイロードの全contentが確実にstr型であることを保証
         safe_payload = [system_prompt]
         for m in groq_messages:
             safe_payload.append({
                 "role": str(m["role"]),
                 "content": str(m["content"])
             })
-        safe_payload.append(current_message_for_groq)
 
         try:
             completion = client.chat.completions.create(
-                model="openai/gpt-oss-120b", # ※マルチモーダル（ビジョン）対応モデル名に合わせ適宜調整してください
+                model="openai/gpt-oss-120b",
                 messages=safe_payload,
                 temperature=0.7,
                 max_tokens=800
             )
             ai_reply = str(completion.choices[0].message.content)
 
-            # データベースへは画像本体ではなく、メタデータ付きのテキストとして安全に保存
+            # データベースへは画像バイナリを含めず、メタデータ付きのテキストとして安全に保存
             save_memory_to_supabase("user", db_save_message)
             save_memory_to_supabase("assistant", ai_reply)
 
