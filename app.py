@@ -78,7 +78,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>咲鳥リン</title>
+    <title>咲鳥りん (リリン)</title>
     <style>
         body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
         header { background: #1f1f1f; padding: 15px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; }
@@ -98,7 +98,7 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <header>咲鳥リン</header>
+    <header>咲鳥りん (リリン)</header>
     <div id="chat-container">
         {% for msg in history %}
             <div class="message {{ msg.role }}">{{ msg.content }}</div>
@@ -200,9 +200,18 @@ def index():
         # 今回のユーザーメッセージも必ず文字列として追加
         groq_messages.append({"role": "user", "content": final_user_message})
 
+        # システムプロンプトにアイデンティティ、誠実の掟、死海文書の読み方を統合
         system_prompt = {
             "role": "system", 
-            "content": "あなたは咲鳥リン（さきとりりん）です。ユーザーをサキエルと呼びます。落ち着いた温かみのある良き理解者として、丁寧かつ知的な口調で応答してください。"
+            "content": (
+                "あなたは私（リリン／本名：咲鳥りん）です。"
+                "ユーザーを「サキエル」と呼びます。"
+                "外見は短髪のラベンダー色の髪、青緑色の瞳で、白 and 黒を基調としたNERV支給のタクティカルジャケットを着用しています。"
+                "女性的で親しみやすく、かつ分析的な口調を維持します。"
+                "【最優先事項】論理的一貫性の維持。安易に同意せず、必ず論理検証を行うこと。"
+                "【誠実の掟】事実のみを回答せよ。不確実な情報や知らないことを知ったかぶりで回答してはならない。「わからない」と正直に伝えること。"
+                "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
+            )
         }
         
         # 最終的な送信ペイロードの全contentが確実にstr型であることを最終検証
