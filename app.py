@@ -2,22 +2,32 @@ import os
 import base64
 from flask import Flask, render_template_string, request, jsonify
 from groq import Groq
-from supabase import create_client, Client
-from tavily import TavilyClient
+import sqlite3
 
 app = Flask(__name__)
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
+# --- 設定 ---
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "your-groq-api-key-here")
+client = Groq(api_key=GROQ_API_KEY)
+DB_NAME = "memory.db"
 
-groq_client = Groq(api_key=GROQ_API_KEY)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
+# --- データベース初期化 ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT,
+            content TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-MODEL_NAME = "openai/gpt-oss-120b"
+init_db()
 
+# --- HTML テンプレート（複数画像添付対応） ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
@@ -26,340 +36,175 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>リリン - 永遠の記憶</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: #121212;
-            color: #e0e0e0;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            height: 100dvh;
-        }
-        header {
-            background-color: #1e1e1e;
-            padding: 15px;
-            text-align: center;
-            font-size: 1.1rem;
-            font-weight: bold;
-            border-bottom: 1px solid #333;
-            color: #d4af37;
-        }
-        #chat-container {
-            flex: 1;
-            overflow-y: auto;
-            padding: 15px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-        .message {
-            max-width: 85%;
-            padding: 12px 16px;
-            border-radius: 16px;
-            line-height: 1.5;
-            word-break: break-word;
-            font-size: 0.95rem;
-        }
-        .user {
-            background-color: #2b5278;
-            color: #fff;
-            align-self: flex-end;
-            border-bottom-right-radius: 4px;
-        }
-        .assistant {
-            background-color: #222;
-            border: 1px solid #333;
-            color: #e0e0e0;
-            align-self: flex-start;
-            border-bottom-left-radius: 4px;
-        }
-        .message img {
-            max-width: 100%;
-            border-radius: 8px;
-            margin-top: 8px;
-            display: block;
-        }
-        #file-preview {
-            font-size: 0.85rem;
-            color: #d4af37;
-            padding: 5px 15px;
-            background-color: #1e1e1e;
-            display: none;
-            border-top: 1px solid #333;
-        }
-        #input-container {
-            background-color: #1e1e1e;
-            padding: 10px 15px;
-            border-top: 1px solid #333;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        #file-btn {
-            background: none;
-            border: none;
-            color: #aaa;
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0 5px;
-            line-height: 1;
-        }
-        #file-btn:hover { color: #d4af37; }
-        #message-input {
-            flex: 1;
-            background-color: #2a2a2a;
-            border: 1px solid #444;
-            border-radius: 20px;
-            padding: 10px 15px;
-            color: #fff;
-            font-size: 1rem;
-            outline: none;
-        }
-        #message-input:focus { border-color: #d4af37; }
-        #send-btn {
-            background-color: #d4af37;
-            color: #121212;
-            border: none;
-            border-radius: 20px;
-            padding: 10px 20px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        #send-btn:disabled { background-color: #555; color: #888; }
+        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { background: #1f1f1f; padding: 15px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; }
+        #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+        .message { padding: 10px 14px; border-radius: 8px; max-width: 80%; line-height: 1.5; word-break: break-all; }
+        .user { background: #2b3a4a; align-self: flex-end; }
+        .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
+        .error { background: #4a2b2b; align-self: center; color: #ff8080; }
+        form { background: #1f1f1f; padding: 10px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #333; }
+        input[type="text"] { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #fff; }
+        input[type="file"] { display: none; }
+        .file-label { background: #333; color: #ccc; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .file-label:hover { background: #444; }
+        button { background: #d4af37; color: #121212; border: none; padding: 10px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        button:hover { background: #e6c555; }
+        #file-count { font-size: 12px; color: #888; }
     </style>
 </head>
 <body>
     <header>リリン - 永遠の記憶</header>
-    
     <div id="chat-container">
-        <div class="message assistant">……よく来てくれたわね。今日もあなたとお話しできるのを楽しみにしていたわ。</div>
+        {% for role, content in history %}
+            <div class="message {{ role }}">{{ content | safe }}</div>
+        {% endfor %}
     </div>
-
-    <div id="file-preview">📎 画像が選択されています</div>
-
-    <div id="input-container">
-        <input type="file" id="image-input" accept="image/*" style="display: none;">
-        <button type="button" id="file-btn" onclick="document.getElementById('image-input').click()">+</button>
-        <input type="text" id="message-input" placeholder="メッセージを入力..." autocomplete="off">
-        <button id="send-btn" onclick="sendMessage()">送信</button>
-    </div>
+    <form id="chat-form" enctype="multipart/form-data">
+        <label class="file-label" for="images">＋画像</label>
+        <input type="file" id="images" name="images" accept="image/*" multiple onchange="updateFileCount()">
+        <span id="file-count"></span>
+        <input type="text" id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off" required>
+        <button type="submit">送信</button>
+    </form>
 
     <script>
         const chatContainer = document.getElementById('chat-container');
-        const messageInput = document.getElementById('message-input');
-        const imageInput = document.getElementById('image-input');
-        const filePreview = document.getElementById('file-preview');
-        const sendBtn = document.getElementById('send-btn');
-        let selectedFileBase64 = null;
-        let selectedMimeType = null;
+        chatContainer.scrollTop = chatContainer.scrollHeight;
 
-        imageInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(uploadEvent) {
-                    const base64String = uploadEvent.target.result.split(',')[1];
-                    selectedFileBase64 = base64String;
-                    selectedMimeType = file.type;
-                    filePreview.style.display = 'block';
-                    filePreview.innerText = `📎 選択中: ${file.name}`;
-                };
-                reader.readAsDataURL(file);
+        function updateFileCount() {
+            const input = document.getElementById('images');
+            const countSpan = document.getElementById('file-count');
+            if (input.files.length > 0) {
+                countSpan.textContent = `${input.files.length}枚選択`;
+            } else {
+                countSpan.textContent = '';
             }
-        });
+        }
 
-        async function sendMessage() {
-            const text = messageInput.value.trim();
-            if (!text && !selectedFileBase64) return;
-
-            let userHtml = text ? escapeHtml(text) : '';
-            if (selectedFileBase64) {
-                userHtml += `<br><img src="data:${selectedMimeType};base64,${selectedFileBase64}">`;
+        document.getElementById('chat-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const msgInput = document.getElementById('message-input');
+            const fileInput = document.getElementById('images');
+            const formData = new FormData();
+            
+            formData.append('message', msgInput.value);
+            for (let i = 0; i < fileInput.files.length; i++) {
+                formData.append('images', fileInput.files[i]);
             }
-            appendMessage(userHtml, 'user');
 
-            const currentText = text;
-            const currentImg = selectedFileBase64;
-            const currentMime = selectedMimeType;
+            // 簡易的な送信中表示
+            const userText = msgInput.value;
+            msgInput.value = '';
+            fileInput.value = '';
+            document.getElementById('file-count').textContent = '';
 
-            messageInput.value = '';
-            imageInput.value = '';
-            selectedFileBase64 = null;
-            selectedMimeType = null;
-            filePreview.style.display = 'none';
-            sendBtn.disabled = true;
-
-            const loadingId = appendMessage('……思考中……', 'assistant');
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.textContent = userText + (fileInput.files.length > 0 ? ' [画像添付]' : '');
+            chatContainer.appendChild(userDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
 
             try {
-                const response = await fetch('/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: currentText, image: currentImg, mime_type: currentMime })
-                });
+                const response = await fetch('/', { method: 'POST', body: formData });
                 const data = await response.json();
-                
-                document.getElementById(loadingId).remove();
-                appendMessage(data.reply, 'assistant');
+
+                const aiDiv = document.createElement('div');
+                aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
+                aiDiv.innerHTML = data.reply || data.error;
+                chatContainer.appendChild(aiDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
             } catch (err) {
-                document.getElementById(loadingId).remove();
-                appendMessage('……少し、通信がうまくいかなかったみたい。', 'assistant');
-            } finally {
-                sendBtn.disabled = false;
+                const errDiv = document.createElement('div');
+                errDiv.className = 'message error';
+                errDiv.textContent = '通信エラーが発生しました。';
+                chatContainer.appendChild(errDiv);
             }
-        }
-
-        function appendMessage(html, sender) {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = `message ${sender}`;
-            if (sender === 'user') {
-                msgDiv.innerHTML = html;
-            } else {
-                msgDiv.innerText = html;
-            }
-            const id = 'msg-' + Date.now();
-            msgDiv.id = id;
-            chatContainer.appendChild(msgDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            return id;
-        }
-
-        function escapeHtml(str) {
-            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-        }
-
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
         });
     </script>
 </body>
 </html>
 """
 
-def search_web(query):
-    if not tavily_client:
-        return ""
-    try:
-        response = tavily_client.search(query=query, search_depth="basic", max_results=3)
-        results = response.get("results", [])
-        context = "\n".join([r.get("content", "") for r in results])
-        return context
-    except Exception as e:
-        print(f"Search error: {e}")
-        return ""
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        user_message = request.form.get("message", "")
+        uploaded_files = request.files.getlist("images")
 
-@app.route("/")
-def home():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.json
-    user_message = data.get("message", "")
-    image_base64 = data.get("image")
-    mime_type = data.get("mime_type")
-
-    # Supabaseからすべての記憶を取得（id順）
-    chat_history = []
-    try:
-        response = supabase.table("memories").select("*").order("created_at", desc=False).execute()
-        if response.data:
-            chat_history = response.data
-    except Exception as db_err:
-        print(f"Database read notice: {db_err}")
-
-    summary_memory = ""
-    recent_messages = chat_history
-    
-    # 履歴が10件を超えた場合の要約処理
-    if len(chat_history) > 10:
-        old_items = chat_history[:-6]
-        recent_messages = chat_history[-6:]
-        old_text = "\n".join([item.get('content', '') for item in old_items])
+        # 1. データベースから過去の会話履歴（テキストのみ）をロード
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT role, content FROM messages ORDER BY id ASC")
+        rows = cursor.fetchall()
         
+        groq_messages = []
+        for role, content in rows:
+            groq_messages.append({"role": role, "content": content})
+        conn.close()
+
+        # 2. 今回のユーザー入力メッセージの組み立て（マルチモーダル対応）
+        current_content = []
+        if user_message:
+            current_content.append({"type": "text", "text": user_message})
+
+        # 複数画像の処理（バイナリをBase64化してGroqへ渡す・DBには保存しない）
+        has_images = False
+        for file in uploaded_files:
+            if file and file.filename != '':
+                image_bytes = file.read()
+                base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                # 拡張子からMIMEタイプを簡易判定
+                ext = file.filename.split('.')[-1].lower()
+                mime_type = f"image/{ext}" if ext in ['png', 'jpeg', 'jpg', 'webp', 'gif'] else "image/jpeg"
+                
+                current_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}
+                })
+                has_images = True
+
+        # 本文が空で画像もない場合は弾く
+        if not current_content:
+            return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
+
+        # Groqに送るメッセージ形式の確定（最新分）
+        groq_messages.append({"role": "user", "content": current_content})
+
         try:
-            summary_completion = groq_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "これまでの会話内容を、重要な事実やユーザーとの思い出を中心に簡潔に要約してください。"},
-                    {"role": "user", "content": old_text}
-                ],
-                temperature=0.3,
-                max_tokens=300,
+            # 3. Groq APIの呼び出し（モデルは必要に応じて変更してください）
+            completion = client.chat.completions.create(
+                model="llama-3.2-11b-vision-preview",  # マルチモーダル対応モデル
+                messages=groq_messages,
+                temperature=0.7,
+                max_tokens=1024
             )
-            summary_memory = summary_completion.choices[0].message.content
-        except Exception as sum_err:
-            print(f"Summary notice: {sum_err}")
+            ai_reply = completion.choices[0].message.content
 
-    # 条件付きWeb検索のトリガー判定
-    search_context = ""
-    trigger_keywords = ["最新", "今日", "ニュース", "天気", "株価", "速報", "現在", "今"]
-    if any(kw in user_message for kw in trigger_keywords):
-        web_result = search_web(user_message)
-        if web_result:
-            search_context = f"\n\n【Web検索結果の参考情報】\n{web_result}"
+            # 4. データベースへは「テキストのみ」を保存（画像データは容量圧迫を防ぐため保存しない）
+            # 履歴のロールとテキスト内容を記録
+            db_user_content = user_message + (" [画像送信]" if has_images else "")
+            
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO messages (role, content) VALUES (?, ?)", ("user", db_user_content))
+            cursor.execute("INSERT INTO messages (role, content) VALUES (?, ?)", ("assistant", ai_reply))
+            conn.commit()
+            conn.close()
 
-    system_prompt = (
-        "あなたは「リリン」という名前の女性です。"
-        "ユーザーの良き理解者であり、これまでの思い出や会話の記憶を大切に心に留めています。"
-        "落ち着いた、温かみのある丁寧な口調で話してください。"
-    )
-    if summary_memory:
-        system_prompt += f"\n\n【これまでの記憶・要約】\n{summary_memory}"
-    
-    if search_context:
-        system_prompt += search_context
+            return jsonify({"status": "success", "reply": ai_reply})
 
-    messages = [{"role": "system", "content": system_prompt}]
+        except Exception as e:
+            return jsonify({"status": "error", "error": f"Error code: 400 - {str(e)}"})
 
-    # 過去のやり取りをメッセージリストに反映
-    for chat_item in recent_messages:
-        content = chat_item.get("content", "")
-        if content:
-            if content.startswith("サキエル:"):
-                messages.append({"role": "user", "content": content.replace("サキエル:", "").strip()})
-            elif content.startswith("リリン:"):
-                messages.append({"role": "assistant", "content": content.replace("リリン:", "").strip()})
-            else:
-                messages.append({"role": "user", "content": content})
+    # GETアクセスの場合は履歴を画面に表示用にロード
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT role, content FROM messages ORDER BY id ASC")
+    history = cursor.fetchall()
+    conn.close()
 
-    # 今回のユーザー入力を組み立て
-    if image_base64:
-        user_content = [
-            {"type": "text", "text": user_message if user_message else "この画像を見て感想や意見を教えて。"},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{image_base64}"
-                }
-            }
-        ]
-        messages.append({"role": "user", "content": user_content})
-        history_save_text = f"[画像送信] {user_message}"
-    else:
-        messages.append({"role": "user", "content": user_message})
-        history_save_text = user_message
+    return render_template_string(HTML_TEMPLATE, history=history)
 
-    try:
-        completion = groq_client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=800,
-        )
-        reply = completion.choices[0].message.content
-
-        # Supabaseへの書き込み（content列のみのシンプルな構造に対応）
-        try:
-            supabase.table("memories").insert({"content": f"サキエル: {history_save_text}"}).execute()
-            supabase.table("memories").insert({"content": f"リリン: {reply}"}).execute()
-        except Exception as insert_err:
-            print(f"Database write notice: {insert_err}")
-
-        return jsonify({"reply": reply})
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"reply": f"……ごめんなさい、エラーが起きたわ: {str(e)}"})
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
