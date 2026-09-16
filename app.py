@@ -66,7 +66,7 @@ def save_memory_to_supabase(role: str, content: str):
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 3. HTML テンプレート（スレッド内画像サムネイル表示対応）
+# 3. HTML テンプレート（画像拡大表示機能対応）
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -131,6 +131,46 @@ HTML_TEMPLATE = """
             border-radius: 4px;
             object-fit: cover;
             border: 1px solid #444;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .msg-thumb:hover {
+            opacity: 0.8;
+        }
+
+        /* 画像モーダル（拡大表示）のスタイル */
+        #image-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        #modal-img {
+            max-width: 90%;
+            max-height: 80vh;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+        #modal-close {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            font-size: 36px;
+            font-weight: bold;
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+        #modal-close:hover {
+            color: #d4af37;
         }
 
         /* プレビュー領域のスタイル */
@@ -216,6 +256,12 @@ HTML_TEMPLATE = """
             </div>
         {% endfor %}
     </div>
+
+    <!-- 画像拡大表示用モーダル -->
+    <div id="image-modal">
+        <button id="modal-close">&times;</button>
+        <img id="modal-img" src="">
+    </div>
     
     <form id="chat-form" enctype="multipart/form-data">
         <div id="preview-container"></div>
@@ -232,6 +278,39 @@ HTML_TEMPLATE = """
         chatContainer.scrollTop = chatContainer.scrollHeight;
 
         let selectedFilesBase64 = [];
+
+        // モーダル関連の処理
+        const modal = document.getElementById('image-modal');
+        const modalImg = document.getElementById('modal-img');
+        const modalClose = document.getElementById('modal-close');
+
+        function openModal(imgSrc) {
+            modalImg.src = imgSrc;
+            modal.style.display = 'flex';
+        }
+
+        modalClose.addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+
+        // 既存および動的生成される画像サムネイルにクリックイベントをバインド
+        function bindImageClicks() {
+            const thumbs = document.querySelectorAll('.msg-thumb');
+            thumbs.forEach(thumb => {
+                thumb.onclick = function() {
+                    openModal(this.src);
+                }
+            });
+        }
+
+        // 初回ロード時の画像にクリックイベント設定
+        bindImageClicks();
 
         function handleFileSelect(event) {
             const input = event.target;
@@ -311,6 +390,9 @@ HTML_TEMPLATE = """
             chatContainer.appendChild(userDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
 
+            // 新しく追加された画像にもクリックイベントを適用
+            bindImageClicks();
+
             try {
                 const response = await fetch('/', { method: 'POST', body: formData });
                 const data = await response.json();
@@ -369,14 +451,12 @@ def index():
                     "url": data_url
                 }
             })
-            # DBに保存する際、HTMLタグ（<img>）として履歴に埋め込めるようにする
             db_image_tags.append(f'<img class="msg-thumb" src="{data_url}">')
 
         final_user_message = str(user_message).strip()
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # DB保存用のテキスト構築
         db_save_message = final_user_message
         if db_image_tags:
             db_save_message += f'<div class="msg-image-container">{"".join(db_image_tags)}</div>'
