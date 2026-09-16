@@ -1,5 +1,5 @@
 Flask
-google-genai
+groq
 supabase
 tavily-python
 gunicorn
