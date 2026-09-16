@@ -48,7 +48,7 @@ def search_web(query: str) -> str:
 # 3. Supabase 側でのデータ入出力・要約関数
 # ==========================================
 def load_memories_from_supabase() -> list:
-    """Supabaseの memories テーブルから会話履歴を読み込む（直近のものを優先・制限）"""
+    """Supabaseの memories テーブルから会話履歴を読み込む"""
     if not supabase:
         return []
     try:
@@ -79,7 +79,6 @@ def load_memories_from_supabase() -> list:
                 
                 history.append({"role": role, "content": str(content_text)})
                     
-        # トークン制限対策として、履歴が多すぎる場合は直近の8件に絞る
         if len(history) > 8:
             system_msgs = [m for m in history if m["role"] == "system"]
             recent_msgs = [m for m in history if m["role"] != "system"][-8:]
@@ -147,7 +146,7 @@ def save_memory_to_supabase(role: str, content: str):
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 4. HTML テンプレート（モバイル対応・スマホ専用モダンUI）
+# 4. HTML テンプレート（改行対応・max_tokens増量版）
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -366,7 +365,8 @@ HTML_TEMPLATE = """
         <div class="form-row">
             <label class="file-label" for="images">＋画像</label>
             <input type="file" id="images" name="images" accept="image/*" multiple onchange="handleFileSelect(event)">
-            <textarea id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off" rows="1" onkeypress="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();document.getElementById('chat-form').requestSubmit();}"></textarea>
+            <!-- Enterで改行できるように変更（送信は「送信」ボタンで行う） -->
+            <textarea id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off" rows="1"></textarea>
             <button type="submit">送信</button>
         </div>
     </form>
@@ -586,12 +586,12 @@ def index():
 
         for attempt in range(1, max_retries + 1):
             try:
-                # max_tokensを指定してトークン制限エラーを回避
+                # 途切れ対策としてmax_tokensを700に少し増やしつつ、1000の制限内に収める
                 completion = client.chat.completions.create(
                     model=TARGET_MODEL,
                     messages=messages_payload,
                     temperature=0.7,
-                    max_tokens=400
+                    max_tokens=700
                 )
                 ai_reply = str(completion.choices[0].message.content)
                 break
