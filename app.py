@@ -17,7 +17,7 @@ client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================
-# 2. Supabase 側でのデータ入出力関数
+# 2. Supabase 側でのデータ入出力・要約関数
 # ==========================================
 def load_memories_from_supabase() -> list:
     """Supabaseの memories テーブルから会話履歴を読み込む"""
@@ -51,8 +51,56 @@ def load_memories_from_supabase() -> list:
         print(f"【DB読み込みエラー】: {e}")
         return []
 
+def summarize_and_cleanup_memories():
+    """履歴が10件を超えた場合、古いものを要約して整理する（フリーレン方式）"""
+    try:
+        history = load_memories_from_supabase()
+        if len(history) > 10:
+            # 古い部分（前半）と直近の部分（後半）に分ける
+            older_history = history[:-6] # 残す直近6件以外
+            recent_history = history[-6:]
+            
+            # 要約対象のテキストを作成
+            text_to_summarize = "\n".join([f"{m['role']}: {m['content']}" for m in older_history])
+            
+            summary_prompt = [
+                {
+                    "role": "system",
+                    "content": "あなたは優秀な記録係です。以下のこれまでの会話の経緯を、重要な文脈や結論を含めて簡潔に日本語で要約してください。"
+                },
+                {
+                    "role": "user",
+                    "content": text_to_summarize
+                }
+            ]
+            
+            completion = client.chat.completions.create(
+                model="qwen/qwen3.8-27b",
+                messages=summary_prompt,
+                temperature=0.5,
+                max_tokens=300
+            )
+            summary_text = completion.choices[0].message.content.strip()
+            
+            # データベースを全削除して、要約データ＋直近の履歴で再構築する
+            supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
+            
+            # 要約を最初のメモリとして保存
+            supabase.table("memories").insert({
+                "content": f"system: 【これまでの経緯の要約】 {summary_text}"
+            }).execute()
+            
+            # 直近の履歴を再挿入
+            for m in recent_history:
+                supabase.table("memories").insert({
+                    "content": f"{m['role']}: {m['content']}"
+                }).execute()
+                
+    except Exception as e:
+        print(f"【要約処理エラー】: {e}")
+
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに文字列として保存する"""
+    """Supabaseの memories テーブルに文字列として保存し、10件超えたら要約を実行する"""
     try:
         if not isinstance(content, str):
             content = str(content)
@@ -62,6 +110,9 @@ def save_memory_to_supabase(role: str, content: str):
         supabase.table("memories").insert({
             "content": formatted_content
         }).execute()
+        
+        # 保存後に件数をチェックして要約
+        summarize_and_cleanup_memories()
     except Exception as e:
         print(f"【DB保存エラー】: {e}")
 
@@ -115,7 +166,6 @@ HTML_TEMPLATE = """
             line-height: 1.5; 
             word-break: break-all; 
         }
-        /* AIの返答部分のマークダウン用スタイル調整 */
         .message p { margin: 0 0 8px 0; }
         .message p:last-child { margin-bottom: 0; }
         .message ul, .message ol { margin: 4px 0; padding-left: 20px; }
@@ -251,15 +301,25 @@ HTML_TEMPLATE = """
     <header>咲鳥りん (リリン)</header>
     <div id="chat-container">
         {% for msg in history %}
-            <div class="message {{ msg.role }}">
-                {% if msg.role == 'assistant' %}
-                    <script>
-                        document.write(marked.parse({| tojson | safe } || ""));
-                    </script>
-                {% else %}
-                    {{ msg.content | safe }}
-                {% endif %}
-            </div>
+            {# システムの要約メッセージは画面には直接出さない、または控えめに表示する場合の分岐 #}
+            {% if msg.role != 'system' %}
+                <div class="message {{ msg.role }}">
+                    {% if msg.role == 'assistant' %}
+                        <div class="markdown-content">{{ msg.content }}</div>
+                        <script>
+                            // 描画時にMarkdownをパース
+                            (function() {
+                                const scripts = document.currentScript.previousElementSibling;
+                                if(scripts && scripts.classList.contains('markdown-content')) {
+                                    scripts.innerHTML = marked.parse(scripts.textContent);
+                                }
+                            })();
+                        </script>
+                    {% else %}
+                        {{ msg.content }}
+                    {% endif %}
+                </div>
+            {% endif %}
         {% endfor %}
     </div>
 
@@ -417,10 +477,12 @@ def index():
         db_history = load_memories_from_supabase()
 
         groq_messages = []
-        for msg in db_history[-10:]:
+        for msg in db_history:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
-            groq_messages.append({"role": r, "content": c})
+            # system役割（要約など）も含めてAIのコンテキストに渡す
+            if r in ["user", "assistant", "system"]:
+                groq_messages.append({"role": r, "content": c})
 
         valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
         image_contents = []
