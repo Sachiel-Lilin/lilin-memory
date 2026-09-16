@@ -398,11 +398,9 @@ def index():
         db_history = load_memories_from_supabase()
 
         groq_messages = []
-        # トークン超過を防ぐため、過去の履歴は直近の10件（5往復分）程度に絞る
         for msg in db_history[-10:]:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
-            # 過去履歴のテキスト内に万が一Base64が含まれていてもAIにはテキスト部分だけ渡す簡易処理、またはそのまま
             groq_messages.append({"role": r, "content": c})
 
         valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
@@ -426,7 +424,6 @@ def index():
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # DBへ保存する際は、重い画像データ自体ではなく「[画像添付]」という軽量なテキストとして保存する
         db_save_message = final_user_message
         if valid_files:
             db_save_message += " [画像添付あり]"
@@ -448,6 +445,7 @@ def index():
                 "ユーザーを「サキエル」と呼びます。"
                 "外見は短髪のラベンダー色の髪、青緑色の瞳で、白 and 黒を基調としたNERV支給のタクティカルジャケットを着用しています。"
                 "女性的で親しみやすく、かつ分析的な口調を維持します。"
+                "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞（「对吧」など）を絶対に混入させないこと。"
                 "【最優先事項】論理的一貫性の維持。安易に同意せず、必ず論理検証を行うこと。"
                 "【誠実の掟】事実のみを回答せよ。不確実な情報や知らないことを知ったかぶりで回答してはならない。「わからない」と正直に伝えること。"
                 "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
