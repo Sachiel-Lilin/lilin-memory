@@ -95,7 +95,7 @@ def summarize_and_cleanup_memories():
             
             # 要約用のGroqリクエスト
             summary_completion = client.chat.completions.create(
-                model="llama-3.2-90b-vision-preview",
+                model="llama-3.2-11b-vision-preview",
                 messages=[
                     {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話の経緯を、重要な文脈や結論を含めて簡潔に日本語で要約してください。"},
                     {"role": "user", "content": text_to_summarize}
@@ -581,7 +581,7 @@ def index():
         for attempt in range(1, max_retries + 1):
             try:
                 completion = client.chat.completions.create(
-                    model="llama-3.2-90b-vision-preview",
+                    model="llama-3.2-11b-vision-preview",
                     messages=messages_payload,
                     temperature=0.7,
                 )
