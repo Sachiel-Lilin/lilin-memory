@@ -66,7 +66,7 @@ def save_memory_to_supabase(role: str, content: str):
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 3. HTML テンプレート
+# 3. HTML テンプレート（marked.jsによるマークダウン対応版）
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -75,6 +75,8 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>咲鳥りん (リリン)</title>
+    <!-- Marked.js CDN for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         * { box-sizing: border-box; }
         body { 
@@ -112,11 +114,16 @@ HTML_TEMPLATE = """
             max-width: 90%; 
             line-height: 1.5; 
             word-break: break-all; 
-            white-space: pre-wrap; 
         }
-        .user { background: #2b3a4a; align-self: flex-end; }
+        /* AIの返答部分のマークダウン用スタイル調整 */
+        .message p { margin: 0 0 8px 0; }
+        .message p:last-child { margin-bottom: 0; }
+        .message ul, .message ol { margin: 4px 0; padding-left: 20px; }
+        .message li { margin-bottom: 4px; }
+        
+        .user { background: #2b3a4a; align-self: flex-end; white-space: pre-wrap; }
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
-        .error { background: #4a2b2b; align-self: center; color: #ff8080; }
+        .error { background: #4a2b2b; align-self: center; color: #ff8080; white-space: pre-wrap; }
         
         .msg-image-container {
             display: flex;
@@ -245,7 +252,13 @@ HTML_TEMPLATE = """
     <div id="chat-container">
         {% for msg in history %}
             <div class="message {{ msg.role }}">
-                {{ msg.content | safe }}
+                {% if msg.role == 'assistant' %}
+                    <script>
+                        document.write(marked.parse({| tojson | safe } || ""));
+                    </script>
+                {% else %}
+                    {{ msg.content | safe }}
+                {% endif %}
             </div>
         {% endfor %}
     </div>
@@ -369,7 +382,13 @@ HTML_TEMPLATE = """
 
                 const aiDiv = document.createElement('div');
                 aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
-                aiDiv.textContent = data.reply || data.error;
+                
+                if (data.status === 'success') {
+                    aiDiv.innerHTML = marked.parse(data.reply);
+                } else {
+                    aiDiv.textContent = data.error;
+                }
+
                 chatContainer.appendChild(aiDiv);
                 aiDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
