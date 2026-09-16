@@ -93,7 +93,6 @@ HTML_TEMPLATE = """
                 formData.append('images', fileInput.files[i]);
             }
 
-            // 簡易的な送信中表示
             const userText = msgInput.value;
             msgInput.value = '';
             fileInput.value = '';
@@ -143,18 +142,16 @@ def index():
             groq_messages.append({"role": role, "content": content})
         conn.close()
 
-        # 2. 今回のユーザー入力メッセージの組み立て（マルチモーダル対応）
+        # 2. 今回のユーザー入力メッセージの組み立て
         current_content = []
         if user_message:
             current_content.append({"type": "text", "text": user_message})
 
-        # 複数画像の処理（バイナリをBase64化してGroqへ渡す・DBには保存しない）
         has_images = False
         for file in uploaded_files:
             if file and file.filename != '':
                 image_bytes = file.read()
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
-                # 拡張子からMIMEタイプを簡易判定
                 ext = file.filename.split('.')[-1].lower()
                 mime_type = f"image/{ext}" if ext in ['png', 'jpeg', 'jpg', 'webp', 'gif'] else "image/jpeg"
                 
@@ -164,25 +161,22 @@ def index():
                 })
                 has_images = True
 
-        # 本文が空で画像もない場合は弾く
         if not current_content:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # Groqに送るメッセージ形式の確定（最新分）
         groq_messages.append({"role": "user", "content": current_content})
 
         try:
-            # 3. Groq APIの呼び出し（モデルは必要に応じて変更してください）
+            # 3. Groq APIの呼び出し（モデル名を設定に合わせて指定）
             completion = client.chat.completions.create(
-                model="llama-3.2-11b-vision-preview",  # マルチモーダル対応モデル
+                model="openai/gpt-oss-120b",  # 正しいモデル名に修正
                 messages=groq_messages,
                 temperature=0.7,
                 max_tokens=1024
             )
             ai_reply = completion.choices[0].message.content
 
-            # 4. データベースへは「テキストのみ」を保存（画像データは容量圧迫を防ぐため保存しない）
-            # 履歴のロールとテキスト内容を記録
+            # 4. データベースへはテキストのみを保存（画像は保存しない）
             db_user_content = user_message + (" [画像送信]" if has_images else "")
             
             conn = sqlite3.connect(DB_NAME)
@@ -195,9 +189,9 @@ def index():
             return jsonify({"status": "success", "reply": ai_reply})
 
         except Exception as e:
-            return jsonify({"status": "error", "error": f"Error code: 400 - {str(e)}"})
+            return jsonify({"status": "error", "error": f"Error: {str(e)}"})
 
-    # GETアクセスの場合は履歴を画面に表示用にロード
+    # GETアクセス時
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT role, content FROM messages ORDER BY id ASC")
