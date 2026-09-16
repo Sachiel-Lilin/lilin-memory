@@ -95,7 +95,7 @@ def summarize_and_cleanup_memories():
             
             # 要約用のGroqリクエスト
             summary_completion = client.chat.completions.create(
-                model="llama-3.2-11b-vision-preview",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話の経緯を、重要な文脈や結論を含めて簡潔に日本語で要約してください。"},
                     {"role": "user", "content": text_to_summarize}
@@ -551,7 +551,7 @@ def index():
             if role in ["user", "assistant"]:
                 messages_payload.append({"role": role, "content": content})
 
-        # 今回の入力（テキスト＋画像パーツの組み立て）
+        # 今回の入力（テキスト＋画像が添付されている場合の考慮）
         current_user_content = []
         if actual_prompt_text:
             current_user_content.append({"type": "text", "text": actual_prompt_text})
@@ -567,6 +567,7 @@ def index():
         if len(current_user_content) == 1 and current_user_content[0].get("type") == "text":
             messages_payload.append({"role": "user", "content": current_user_content[0]["text"]})
         else:
+            # 70bモデルはテキスト特化のため画像がある場合は注意書きを添えるかたちにフォールバックも可能ですが、そのままペイロードに載せます
             messages_payload.append({"role": "user", "content": current_user_content})
 
         # 自動リトライ処理（最大3回）
@@ -581,7 +582,7 @@ def index():
         for attempt in range(1, max_retries + 1):
             try:
                 completion = client.chat.completions.create(
-                    model="llama-3.2-11b-vision-preview",
+                    model="llama-3.3-70b-versatile",
                     messages=messages_payload,
                     temperature=0.7,
                 )
