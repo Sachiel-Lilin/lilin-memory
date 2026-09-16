@@ -17,10 +17,10 @@ client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================
-# 2. Supabase 側でのデータ入出力関数（contentカラム専用）
+# 2. Supabase 側でのデータ入出力関数（完全文字列化保証）
 # ==========================================
 def load_memories_from_supabase() -> list:
-    """Supabaseの memories テーブルから会話履歴（content）を読み込む"""
+    """Supabaseの memories テーブルから会話履歴を安全に読み込む"""
     try:
         response = supabase.table("memories") \
             .select("content, created_at") \
@@ -30,18 +30,25 @@ def load_memories_from_supabase() -> list:
         history = []
         if response.data:
             for row in response.data:
-                content = row.get("content", "")
-                if not isinstance(content, str):
-                    content = str(content)
+                raw_content = row.get("content", "")
                 
-                # contentの形式（例: "user: こんにちは" や "assistant: ..."）からロールを復元する簡易パース
-                if content.startswith("user: "):
-                    history.append({"role": "user", "content": content[6:]})
-                elif content.startswith("assistant: "):
-                    history.append({"role": "assistant", "content": content[11:]})
+                # どんなデータが入っていても必ず強制的に文字列化する
+                if not isinstance(raw_content, str):
+                    raw_content = str(raw_content)
+                
+                # "role: 本文" の形式からロールとテキストを復元
+                if raw_content.startswith("user: "):
+                    role = "user"
+                    content_text = raw_content[6:]
+                elif raw_content.startswith("assistant: "):
+                    role = "assistant"
+                    content_text = raw_content[11:]
                 else:
-                    # デフォルトとしてユーザー扱い、あるいはそのまま保持
-                    history.append({"role": "user", "content": content})
+                    role = "user"
+                    content_text = raw_content
+                
+                # 二重安全：contentも必ず文字列にする
+                history.append({"role": role, "content": str(content_text)})
                     
         return history
     except Exception as e:
@@ -49,18 +56,16 @@ def load_memories_from_supabase() -> list:
         return []
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに 'role: content' の形式で文字列を保存する"""
+    """Supabaseの memories テーブルに文字列として保存する"""
     try:
         if not isinstance(content, str):
             content = str(content)
             
-        # 既存の id と content のみのテーブル構造に合わせ、ロールを内包した文字列として保存する
         formatted_content = f"{role}: {content}"
             
         supabase.table("memories").insert({
             "content": formatted_content
         }).execute()
-        print(f"【DB保存成功】 {formatted_content[:30]}...")
     except Exception as e:
         print(f"【DB保存エラー】: {e}")
 
@@ -177,59 +182,54 @@ def index():
 
         db_history = load_memories_from_supabase()
 
+        # Groqへ送るメッセージを完全に文字列のみで構築
         groq_messages = []
         for msg in db_history:
-            role = str(msg.get("role", "user"))
-            content = str(msg.get("content", ""))
-            groq_messages.append({"role": role, "content": content})
+            r = str(msg.get("role", "user"))
+            c = str(msg.get("content", ""))
+            groq_messages.append({"role": r, "content": c})
 
-        current_content = []
-        if user_message:
-            current_content.append({"type": "text", "text": user_message})
+        has_images = any(f and f.filename != '' for f in uploaded_files)
+        final_user_message = str(user_message)
+        if has_images:
+            final_user_message += " [画像が送信されました]"
 
-        has_images = False
-        for file in uploaded_files:
-            if file and file.filename != '':
-                image_bytes = file.read()
-                base64_image = base64.b64encode(image_bytes).decode('utf-8')
-                ext = file.filename.split('.')[-1].lower()
-                mime_type = f"image/{ext}" if ext in ['png', 'jpeg', 'jpg', 'webp', 'gif'] else "image/jpeg"
-                
-                current_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}
-                })
-                has_images = True
-
-        if not current_content:
+        if not final_user_message.strip():
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        groq_messages.append({"role": "user", "content": current_content if has_images else user_message})
+        # 今回のユーザーメッセージも必ず文字列として追加
+        groq_messages.append({"role": "user", "content": final_user_message})
 
         system_prompt = {
             "role": "system", 
             "content": "あなたは咲鳥リン（さきとりりん）です。ユーザーをサキエルと呼びます。落ち着いた温かみのある良き理解者として、丁寧かつ知的な口調で応答してください。"
         }
-        payload = [system_prompt] + groq_messages
+        
+        # 最終的な送信ペイロードの全contentが確実にstr型であることを最終検証
+        safe_payload = [system_prompt]
+        for m in groq_messages:
+            safe_payload.append({
+                "role": str(m["role"]),
+                "content": str(m["content"])
+            })
 
         try:
             completion = client.chat.completions.create(
                 model="openai/gpt-oss-120b",
-                messages=payload,
+                messages=safe_payload,
                 temperature=0.7,
                 max_tokens=800
             )
-            ai_reply = completion.choices[0].message.content
+            ai_reply = str(completion.choices[0].message.content)
 
-            db_user_content = user_message + (" [画像送信]" if has_images else "")
-            
-            # 既存テーブルの構造（id, content）に合わせて保存を実行
-            save_memory_to_supabase("user", db_user_content)
+            # データベースへ安全に保存
+            save_memory_to_supabase("user", final_user_message)
             save_memory_to_supabase("assistant", ai_reply)
 
             return jsonify({"status": "success", "reply": ai_reply})
 
         except Exception as e:
+            print(f"【Groq API エラー】: {str(e)}")
             return jsonify({"status": "error", "error": f"Error: {str(e)}"})
 
     history = load_memories_from_supabase()
