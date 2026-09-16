@@ -1,5 +1,3 @@
-Flask
-groq
+flask
+google-genai
 supabase
-gunicorn
-tavily-python
