@@ -15,46 +15,54 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
 client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-USER_ID = "web_user_default"
 
 # ==========================================
-# 2. Supabase 側でのデータ入出力関数
+# 2. Supabase 側でのデータ入出力関数（contentカラム専用）
 # ==========================================
 def load_memories_from_supabase() -> list:
-    """Supabaseの memories テーブルから会話履歴を読み込む"""
+    """Supabaseの memories テーブルから会話履歴（content）を読み込む"""
     try:
         response = supabase.table("memories") \
-            .select("role, content") \
-            .eq("user_id", USER_ID) \
+            .select("content, created_at") \
             .order("created_at", desc=False) \
             .execute()
         
         history = []
         if response.data:
             for row in response.data:
-                role = str(row.get("role", "user"))
                 content = row.get("content", "")
                 if not isinstance(content, str):
                     content = str(content)
-                history.append({"role": role, "content": content})
+                
+                # contentの形式（例: "user: こんにちは" や "assistant: ..."）からロールを復元する簡易パース
+                if content.startswith("user: "):
+                    history.append({"role": "user", "content": content[6:]})
+                elif content.startswith("assistant: "):
+                    history.append({"role": "assistant", "content": content[11:]})
+                else:
+                    # デフォルトとしてユーザー扱い、あるいはそのまま保持
+                    history.append({"role": "user", "content": content})
+                    
         return history
     except Exception as e:
-        print(f"履歴読み込みエラー: {e}")
+        print(f"【DB読み込みエラー】: {e}")
         return []
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに新しいメッセージを保存する"""
+    """Supabaseの memories テーブルに 'role: content' の形式で文字列を保存する"""
     try:
         if not isinstance(content, str):
             content = str(content)
             
+        # 既存の id と content のみのテーブル構造に合わせ、ロールを内包した文字列として保存する
+        formatted_content = f"{role}: {content}"
+            
         supabase.table("memories").insert({
-            "user_id": USER_ID,
-            "role": role,
-            "content": content
+            "content": formatted_content
         }).execute()
+        print(f"【DB保存成功】 {formatted_content[:30]}...")
     except Exception as e:
-        print(f"履歴保存エラー: {e}")
+        print(f"【DB保存エラー】: {e}")
 
 # ==========================================
 # 3. HTML テンプレート（モバイルファースト）
@@ -214,6 +222,8 @@ def index():
             ai_reply = completion.choices[0].message.content
 
             db_user_content = user_message + (" [画像送信]" if has_images else "")
+            
+            # 既存テーブルの構造（id, content）に合わせて保存を実行
             save_memory_to_supabase("user", db_user_content)
             save_memory_to_supabase("assistant", ai_reply)
 
