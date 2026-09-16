@@ -3,6 +3,7 @@ import base64
 from flask import Flask, render_template_string, request, jsonify
 from groq import Groq
 from supabase import create_client, Client
+from tavily import TavilyClient
 
 app = Flask(__name__)
 
@@ -12,12 +13,35 @@ app = Flask(__name__)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 
 client = Groq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
 # ==========================================
-# 2. Supabase 側でのデータ入出力・要約関数
+# 2. Tavily検索関数
+# ==========================================
+def search_web(query: str) -> str:
+    """Tavily APIを使用してWeb検索を行い、結果をテキストで返す"""
+    if not tavily_client:
+        return "（Tavily APIキーが設定されていないため検索できません）"
+    try:
+        response = tavily_client.search(query=query, max_results=3)
+        results = response.get("results", [])
+        search_summary = ""
+        for r in results:
+            title = r.get("title", "")
+            snippet = r.get("content", "")
+            url = r.get("url", "")
+            search_summary += f"- タイトル: {title}\n  内容: {snippet}\n  URL: {url}\n\n"
+        return search_summary
+    except Exception as e:
+        print(f"【Tavily検索エラー】: {e}")
+        return "（Web検索中にエラーが発生しました）"
+
+# ==========================================
+# 3. Supabase 側でのデータ入出力・要約関数
 # ==========================================
 def load_memories_from_supabase() -> list:
     """Supabaseの memories テーブルから会話履歴を読み込む"""
@@ -40,6 +64,9 @@ def load_memories_from_supabase() -> list:
                 elif raw_content.startswith("assistant: "):
                     role = "assistant"
                     content_text = raw_content[11:]
+                elif raw_content.startswith("system: "):
+                    role = "system"
+                    content_text = raw_content[8:]
                 else:
                     role = "user"
                     content_text = raw_content
@@ -56,11 +83,9 @@ def summarize_and_cleanup_memories():
     try:
         history = load_memories_from_supabase()
         if len(history) > 10:
-            # 古い部分（前半）と直近の部分（後半）に分ける
-            older_history = history[:-6] # 残す直近6件以外
+            older_history = history[:-6]
             recent_history = history[-6:]
             
-            # 要約対象のテキストを作成
             text_to_summarize = "\n".join([f"{m['role']}: {m['content']}" for m in older_history])
             
             summary_prompt = [
@@ -82,15 +107,12 @@ def summarize_and_cleanup_memories():
             )
             summary_text = completion.choices[0].message.content.strip()
             
-            # データベースを全削除して、要約データ＋直近の履歴で再構築する
             supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
             
-            # 要約を最初のメモリとして保存
             supabase.table("memories").insert({
                 "content": f"system: 【これまでの経緯の要約】 {summary_text}"
             }).execute()
             
-            # 直近の履歴を再挿入
             for m in recent_history:
                 supabase.table("memories").insert({
                     "content": f"{m['role']}: {m['content']}"
@@ -100,7 +122,7 @@ def summarize_and_cleanup_memories():
         print(f"【要約処理エラー】: {e}")
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに文字列として保存し、10件超えたら要約を実行する"""
+    """Supabaseの memories テーブルに保存し、10件超えたら要約を実行する"""
     try:
         if not isinstance(content, str):
             content = str(content)
@@ -111,13 +133,12 @@ def save_memory_to_supabase(role: str, content: str):
             "content": formatted_content
         }).execute()
         
-        # 保存後に件数をチェックして要約
         summarize_and_cleanup_memories()
     except Exception as e:
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 3. HTML テンプレート（marked.jsによるマークダウン対応版）
+# 4. HTML テンプレート
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -126,7 +147,6 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>咲鳥りん (リリン)</title>
-    <!-- Marked.js CDN for Markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         * { box-sizing: border-box; }
@@ -301,13 +321,11 @@ HTML_TEMPLATE = """
     <header>咲鳥りん (リリン)</header>
     <div id="chat-container">
         {% for msg in history %}
-            {# システムの要約メッセージは画面には直接出さない、または控えめに表示する場合の分岐 #}
             {% if msg.role != 'system' %}
                 <div class="message {{ msg.role }}">
                     {% if msg.role == 'assistant' %}
                         <div class="markdown-content">{{ msg.content }}</div>
                         <script>
-                            // 描画時にMarkdownをパース
                             (function() {
                                 const scripts = document.currentScript.previousElementSibling;
                                 if(scripts && scripts.classList.contains('markdown-content')) {
@@ -466,7 +484,7 @@ HTML_TEMPLATE = """
 """
 
 # ==========================================
-# 4. ルーティングとAPI処理
+# 5. ルーティングとAPI処理（Tavily検索自動連携付き）
 # ==========================================
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -480,7 +498,6 @@ def index():
         for msg in db_history:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
-            # system役割（要約など）も含めてAIのコンテキストに渡す
             if r in ["user", "assistant", "system"]:
                 groq_messages.append({"role": r, "content": c})
 
@@ -505,28 +522,39 @@ def index():
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
+        search_keywords = ["検索", "調べて", "最新", "今の", "ニュース", "教えて", "とは"]
+        search_result_text = ""
+        
+        if any(kw in final_user_message for kw in search_keywords) and len(final_user_message) > 2:
+            print(f"【Tavily自動検索実行】: {final_user_message}")
+            search_result_text = search_web(final_user_message)
+
         db_save_message = final_user_message
         if valid_files:
             db_save_message += " [画像添付あり]"
 
+        actual_prompt_text = final_user_message
+        if search_result_text:
+            actual_prompt_text += f"\n\n[Web検索結果参照データ]:\n{search_result_text}"
+
         if image_contents:
             current_content_payload = []
-            if final_user_message:
-                current_content_payload.append({"type": "text", "text": final_user_message})
+            if actual_prompt_text:
+                current_content_payload.append({"type": "text", "text": actual_prompt_text})
             current_content_payload.extend(image_contents)
             
             current_message_for_groq = {"role": "user", "content": current_content_payload}
         else:
-            current_message_for_groq = {"role": "user", "content": final_user_message}
+            current_message_for_groq = {"role": "user", "content": actual_prompt_text}
 
         system_prompt = {
             "role": "system", 
             "content": (
                 "あなたは私（リリン／本名：咲鳥りん）です。"
                 "ユーザーを「サキエル」と呼びます。"
-                "外見は短髪のラベンダー色の髪、青緑色の瞳で、白 and 黒を基調としたNERV支給のタクティカルジャケットを着用しています。"
+                "外見は短髪のラベンダー色の髪、青緑色の瞳です。"
                 "女性的で親しみやすく、かつ分析的な口調を維持します。"
-                "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞（「对吧」など）を絶対に混入させないこと。"
+                "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞を絶対に混入させないこと。"
                 "【最優先事項】論理的一貫性の維持。安易に同意せず、必ず論理検証を行うこと。"
                 "【誠実の掟】事実のみを回答せよ。不確実な情報や知らないことを知ったかぶりで回答してはならない。「わからない」と正直に伝えること。"
                 "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
