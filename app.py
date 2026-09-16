@@ -1,204 +1,124 @@
 import os
-import base64
-from flask import Flask, render_template_string, request, jsonify
+import streamlit as st
 from groq import Groq
-import sqlite3
+from supabase import create_client, Client
 
-app = Flask(__name__)
+# ==========================================
+# 1. クライアントおよび接続の初期化
+# ==========================================
+# Streamlit secrets または環境変数から認証情報を取得
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", ""))
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", ""))
 
-# --- 設定 ---
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "your-groq-api-key-here")
-client = Groq(api_key=GROQ_API_KEY)
-DB_NAME = "memory.db"
+if not GROQ_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("Groq API Key または Supabase の接続情報が設定されていません。")
+    st.stop()
 
-# --- データベース初期化 ---
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT,
-            content TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+groq_client = Groq(api_key=GROQ_API_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-init_db()
+USER_ID = "web_user_default"  # 必要に応じて変更
 
-# --- HTML テンプレート（複数画像添付対応） ---
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>リリン - 永遠の記憶</title>
-    <style>
-        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
-        header { background: #1f1f1f; padding: 15px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; }
-        #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .message { padding: 10px 14px; border-radius: 8px; max-width: 80%; line-height: 1.5; word-break: break-all; }
-        .user { background: #2b3a4a; align-self: flex-end; }
-        .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
-        .error { background: #4a2b2b; align-self: center; color: #ff8080; }
-        form { background: #1f1f1f; padding: 10px; display: flex; gap: 8px; align-items: center; border-top: 1px solid #333; }
-        input[type="text"] { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #fff; }
-        input[type="file"] { display: none; }
-        .file-label { background: #333; color: #ccc; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-        .file-label:hover { background: #444; }
-        button { background: #d4af37; color: #121212; border: none; padding: 10px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
-        button:hover { background: #e6c555; }
-        #file-count { font-size: 12px; color: #888; }
-    </style>
-</head>
-<body>
-    <header>リリン - 永遠の記憶</header>
-    <div id="chat-container">
-        {% for role, content in history %}
-            <div class="message {{ role }}">{{ content | safe }}</div>
-        {% endfor %}
-    </div>
-    <form id="chat-form" enctype="multipart/form-data">
-        <label class="file-label" for="images">＋画像</label>
-        <input type="file" id="images" name="images" accept="image/*" multiple onchange="updateFileCount()">
-        <span id="file-count"></span>
-        <input type="text" id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off" required>
-        <button type="submit">送信</button>
-    </form>
-
-    <script>
-        const chatContainer = document.getElementById('chat-container');
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-
-        function updateFileCount() {
-            const input = document.getElementById('images');
-            const countSpan = document.getElementById('file-count');
-            if (input.files.length > 0) {
-                countSpan.textContent = `${input.files.length}枚選択`;
-            } else {
-                countSpan.textContent = '';
-            }
-        }
-
-        document.getElementById('chat-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const msgInput = document.getElementById('message-input');
-            const fileInput = document.getElementById('images');
-            const formData = new FormData();
-            
-            formData.append('message', msgInput.value);
-            for (let i = 0; i < fileInput.files.length; i++) {
-                formData.append('images', fileInput.files[i]);
-            }
-
-            const userText = msgInput.value;
-            msgInput.value = '';
-            fileInput.value = '';
-            document.getElementById('file-count').textContent = '';
-
-            const userDiv = document.createElement('div');
-            userDiv.className = 'message user';
-            userDiv.textContent = userText + (fileInput.files.length > 0 ? ' [画像添付]' : '');
-            chatContainer.appendChild(userDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-
-            try {
-                const response = await fetch('/', { method: 'POST', body: formData });
-                const data = await response.json();
-
-                const aiDiv = document.createElement('div');
-                aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
-                aiDiv.innerHTML = data.reply || data.error;
-                chatContainer.appendChild(aiDiv);
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-            } catch (err) {
-                const errDiv = document.createElement('div');
-                errDiv.className = 'message error';
-                errDiv.textContent = '通信エラーが発生しました。';
-                chatContainer.appendChild(errDiv);
-            }
-        });
-    </script>
-</body>
-</html>
-"""
-
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        user_message = request.form.get("message", "")
-        uploaded_files = request.files.getlist("images")
-
-        # 1. データベースから過去の会話履歴（テキストのみ）をロード
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT role, content FROM messages ORDER BY id ASC")
-        rows = cursor.fetchall()
+# ==========================================
+# 2. Supabase 側でのデータ入出力関数
+# ==========================================
+def load_memories_from_supabase() -> list:
+    """Supabaseの memories テーブルから会話履歴を読み込む"""
+    try:
+        response = supabase.table("memories") \
+            .select("role, content") \
+            .eq("user_id", USER_ID) \
+            .order("created_at", desc=False) \
+            .execute()
         
-        groq_messages = []
-        for role, content in rows:
-            groq_messages.append({"role": role, "content": content})
-        conn.close()
+        history = []
+        if response.data:
+            for row in response.data:
+                role = row.get("role", "user")
+                content = row.get("content", "")
+                # 【重要】Groqに渡すcontentは必ず「文字列（str）」に強制変換し、構造体の混入を防ぐ
+                if not isinstance(content, str):
+                    content = str(content)
+                history.append({"role": role, "content": content})
+        return history
+    except Exception as e:
+        st.warning(f"履歴の読み込みに失敗しました: {e}")
+        return []
 
-        # 2. 今回のユーザー入力メッセージの組み立て
-        current_content = []
-        if user_message:
-            current_content.append({"type": "text", "text": user_message})
-
-        has_images = False
-        for file in uploaded_files:
-            if file and file.filename != '':
-                image_bytes = file.read()
-                base64_image = base64.b64encode(image_bytes).decode('utf-8')
-                ext = file.filename.split('.')[-1].lower()
-                mime_type = f"image/{ext}" if ext in ['png', 'jpeg', 'jpg', 'webp', 'gif'] else "image/jpeg"
-                
-                current_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}
-                })
-                has_images = True
-
-        if not current_content:
-            return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
-
-        groq_messages.append({"role": "user", "content": current_content})
-
-        try:
-            # 3. Groq APIの呼び出し（モデル名を設定に合わせて指定）
-            completion = client.chat.completions.create(
-                model="openai/gpt-oss-120b",  # 正しいモデル名に修正
-                messages=groq_messages,
-                temperature=0.7,
-                max_tokens=1024
-            )
-            ai_reply = completion.choices[0].message.content
-
-            # 4. データベースへはテキストのみを保存（画像は保存しない）
-            db_user_content = user_message + (" [画像送信]" if has_images else "")
+def save_memory_to_supabase(role: str, content: str):
+    """Supabaseの memories テーブルに新しいメッセージを保存する"""
+    try:
+        # 画像オブジェクトなどは保存せず、純粋なテキストのみを保存する
+        if not isinstance(content, str):
+            content = str(content)
             
-            conn = sqlite3.connect(DB_NAME)
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO messages (role, content) VALUES (?, ?)", ("user", db_user_content))
-            cursor.execute("INSERT INTO messages (role, content) VALUES (?, ?)", ("assistant", ai_reply))
-            conn.commit()
-            conn.close()
+        supabase.table("memories").insert({
+            "user_id": USER_ID,
+            "role": role,
+            "content": content
+        }).execute()
+    except Exception as e:
+        st.warning(f"履歴の保存に失敗しました: {e}")
 
-            return jsonify({"status": "success", "reply": ai_reply})
+# ==========================================
+# 3. Streamlit UI 画面の構築
+# ==========================================
+st.set_page_config(page_title="Lilith Interface", page_icon="⚡")
+st.title("Lilin System Interface")
 
-        except Exception as e:
-            return jsonify({"status": "error", "error": f"Error: {str(e)}"})
+# セッションステートの初期化（Supabaseから読み込み）
+if "messages" not in st.session_state:
+    st.session_state.messages = load_memories_from_supabase()
 
-    # GETアクセス時
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role, content FROM messages ORDER BY id ASC")
-    history = cursor.fetchall()
-    conn.close()
+# 画面上のチャット履歴を描画
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    return render_template_string(HTML_TEMPLATE, history=history)
+# ==========================================
+# 4. ユーザー入力とGroq APIの処理
+# ==========================================
+if prompt := st.chat_input("メッセージを入力..."):
+    # ユーザー入力を画面に即時反映
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # ユーザー発話をセッションおよびSupabaseへ保存
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    save_memory_to_supabase("user", prompt)
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Groq API に送るメッセージ配列を構築（全要素が確実に文字列であることを保証）
+    groq_messages = []
+    for msg in st.session_state.messages:
+        c = msg["content"]
+        if not isinstance(c, str):
+            c = str(c)
+        groq_messages.append({"role": msg["role"], "content": c})
+
+    # システムプロンプトやペルソナ設定があればここに挿入可能
+    system_prompt = {
+        "role": "system", 
+        "content": "あなたはリリンです。ユーザーをサキエルと呼びます。分析的かつ親しみやすい口調で応答してください。"
+    }
+    api_payload = [system_prompt] + groq_messages
+
+    # Groq API呼び出し（Llama 3 等を使用）
+    try:
+        completion = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",  # または使用しているモデル名
+            messages=api_payload,
+            temperature=0.7,
+        )
+        assistant_response = completion.choices[0].message.content
+
+        # アシスタントの返答を画面に描画
+        with st.chat_message("assistant"):
+            st.markdown(assistant_response)
+
+        # アシスタントの返答をセッションおよびSupabaseへ保存
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+        save_memory_to_supabase("assistant", assistant_response)
+
+    except Exception as e:
+        st.error(f"Groq API エラーが発生しました: {e}")
