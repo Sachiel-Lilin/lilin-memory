@@ -66,7 +66,7 @@ def save_memory_to_supabase(role: str, content: str):
         print(f"【DB保存エラー】: {e}")
 
 # ==========================================
-# 3. HTML テンプレート（画像拡大表示機能対応）
+# 3. HTML テンプレート
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -118,7 +118,6 @@ HTML_TEMPLATE = """
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
         .error { background: #4a2b2b; align-self: center; color: #ff8080; }
         
-        /* スレッド内の画像サムネイル */
         .msg-image-container {
             display: flex;
             gap: 6px;
@@ -134,11 +133,8 @@ HTML_TEMPLATE = """
             cursor: pointer;
             transition: opacity 0.2s;
         }
-        .msg-thumb:hover {
-            opacity: 0.8;
-        }
+        .msg-thumb:hover { opacity: 0.8; }
 
-        /* 画像モーダル（拡大表示）のスタイル */
         #image-modal {
             display: none;
             position: fixed;
@@ -169,11 +165,8 @@ HTML_TEMPLATE = """
             background: none;
             border: none;
         }
-        #modal-close:hover {
-            color: #d4af37;
-        }
+        #modal-close:hover { color: #d4af37; }
 
-        /* プレビュー領域のスタイル */
         #preview-container {
             display: flex;
             gap: 8px;
@@ -257,7 +250,6 @@ HTML_TEMPLATE = """
         {% endfor %}
     </div>
 
-    <!-- 画像拡大表示用モーダル -->
     <div id="image-modal">
         <button id="modal-close">&times;</button>
         <img id="modal-img" src="">
@@ -279,7 +271,6 @@ HTML_TEMPLATE = """
 
         let selectedFilesBase64 = [];
 
-        // モーダル関連の処理
         const modal = document.getElementById('image-modal');
         const modalImg = document.getElementById('modal-img');
         const modalClose = document.getElementById('modal-close');
@@ -289,27 +280,14 @@ HTML_TEMPLATE = """
             modal.style.display = 'flex';
         }
 
-        modalClose.addEventListener('click', () => {
-            modal.style.display = 'none';
-        });
+        modalClose.addEventListener('click', () => { modal.style.display = 'none'; });
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
 
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                modal.style.display = 'none';
-            }
-        });
-
-        // 既存および動的生成される画像サムネイルにクリックイベントをバインド
         function bindImageClicks() {
-            const thumbs = document.querySelectorAll('.msg-thumb');
-            thumbs.forEach(thumb => {
-                thumb.onclick = function() {
-                    openModal(this.src);
-                }
+            document.querySelectorAll('.msg-thumb').forEach(thumb => {
+                thumb.onclick = function() { openModal(this.src); }
             });
         }
-
-        // 初回ロード時の画像にクリックイベント設定
         bindImageClicks();
 
         function handleFileSelect(event) {
@@ -326,23 +304,19 @@ HTML_TEMPLATE = """
                 }
 
                 for (let i = 0; i < input.files.length; i++) {
-                    const file = input.files[i];
                     const reader = new FileReader();
-
                     reader.onload = function(e) {
                         const base64Data = e.target.result;
                         selectedFilesBase64.push(base64Data);
 
                         const wrapper = document.createElement('div');
                         wrapper.className = 'preview-thumb-wrapper';
-                        
                         const img = document.createElement('img');
                         img.src = base64Data;
-                        
                         wrapper.appendChild(img);
                         previewContainer.appendChild(wrapper);
                     }
-                    reader.readAsDataURL(file);
+                    reader.readAsDataURL(input.files[i]);
                 }
             }
         }
@@ -361,13 +335,11 @@ HTML_TEMPLATE = """
             const userText = msgInput.value;
             const currentImages = [...selectedFilesBase64];
             
-            // フォームとプレビューをリセット
             msgInput.value = '';
             fileInput.value = '';
             selectedFilesBase64 = [];
             document.getElementById('preview-container').innerHTML = '';
 
-            // ユーザーメッセージの吹き出しを作成（テキスト ＋ サムネイル画像）
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
             
@@ -389,8 +361,6 @@ HTML_TEMPLATE = """
 
             chatContainer.appendChild(userDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
-
-            // 新しく追加された画像にもクリックイベントを適用
             bindImageClicks();
 
             try {
@@ -401,7 +371,6 @@ HTML_TEMPLATE = """
                 aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
                 aiDiv.textContent = data.reply || data.error;
                 chatContainer.appendChild(aiDiv);
-
                 aiDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             } catch (err) {
@@ -429,14 +398,15 @@ def index():
         db_history = load_memories_from_supabase()
 
         groq_messages = []
-        for msg in db_history:
+        # トークン超過を防ぐため、過去の履歴は直近の10件（5往復分）程度に絞る
+        for msg in db_history[-10:]:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
+            # 過去履歴のテキスト内に万が一Base64が含まれていてもAIにはテキスト部分だけ渡す簡易処理、またはそのまま
             groq_messages.append({"role": r, "content": c})
 
         valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
         image_contents = []
-        db_image_tags = []
         
         for f in valid_files:
             file_bytes = f.read()
@@ -451,15 +421,15 @@ def index():
                     "url": data_url
                 }
             })
-            db_image_tags.append(f'<img class="msg-thumb" src="{data_url}">')
 
         final_user_message = str(user_message).strip()
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
+        # DBへ保存する際は、重い画像データ自体ではなく「[画像添付]」という軽量なテキストとして保存する
         db_save_message = final_user_message
-        if db_image_tags:
-            db_save_message += f'<div class="msg-image-container">{"".join(db_image_tags)}</div>'
+        if valid_files:
+            db_save_message += " [画像添付あり]"
 
         if image_contents:
             current_content_payload = []
