@@ -2,7 +2,7 @@ import os
 import time
 import base64
 from flask import Flask, render_template_string, request, jsonify
-from google import genai
+from groq import Groq
 from supabase import create_client, Client
 from tavily import TavilyClient
 
@@ -14,8 +14,9 @@ app = Flask(__name__)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
-client = genai.Client()
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
@@ -64,10 +65,10 @@ def load_memories_from_supabase() -> list:
                     role = "user"
                     content_text = raw_content[6:]
                 elif raw_content.startswith("assistant: "):
-                    role = "model"
+                    role = "assistant"
                     content_text = raw_content[11:]
                 elif raw_content.startswith("system: "):
-                    role = "user"
+                    role = "system"
                     content_text = raw_content[8:]
                 else:
                     role = "user"
@@ -82,7 +83,7 @@ def load_memories_from_supabase() -> list:
 
 def summarize_and_cleanup_memories():
     """履歴が10件を超えた場合、古いものを要約して整理する（フリーレン方式）"""
-    if not supabase:
+    if not supabase or not client:
         return
     try:
         history = load_memories_from_supabase()
@@ -92,12 +93,16 @@ def summarize_and_cleanup_memories():
             
             text_to_summarize = "\n".join([f"{m['role']}: {m['content']}" for m in older_history])
             
-            # 要約時も念のためリトライまたはそのまま生成
-            summary_response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=f"あなたは優秀な記録係です。以下のこれまでの会話の経緯を、重要な文脈や結論を含めて簡潔に日本語で要約してください。\n\n{text_to_summarize}",
+            # 要約用のGroqリクエスト
+            summary_completion = client.chat.completions.create(
+                model="llama-3.2-90b-vision-preview",
+                messages=[
+                    {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話の経緯を、重要な文脈や結論を含めて簡潔に日本語で要約してください。"},
+                    {"role": "user", "content": text_to_summarize}
+                ],
+                temperature=0.3
             )
-            summary_text = summary_response.text.strip()
+            summary_text = summary_completion.choices[0].message.content.strip()
             
             supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
             
@@ -106,7 +111,7 @@ def summarize_and_cleanup_memories():
             }).execute()
             
             for m in recent_history:
-                role_prefix = "assistant" if m['role'] == "model" else "user"
+                role_prefix = "assistant" if m['role'] == "assistant" else "user"
                 supabase.table("memories").insert({
                     "content": f"{role_prefix}: {m['content']}"
                 }).execute()
@@ -188,7 +193,7 @@ HTML_TEMPLATE = """
         .message li { margin-bottom: 4px; }
         
         .user { background: #2b3a4a; align-self: flex-end; }
-        .model { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
+        .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
         .error { background: #4a2b2b; align-self: center; color: #ff8080; }
         
         .msg-image-container {
@@ -323,8 +328,8 @@ HTML_TEMPLATE = """
     <div id="chat-container">
         {% for msg in history %}
             {% if msg.role != 'system' %}
-                <div class="message {{ msg.role }}">
-                    {% if msg.role == 'model' %}
+                <div class="message {{ 'assistant' if msg.role == 'assistant' else 'user' }}">
+                    {% if msg.role == 'assistant' %}
                         <div class="markdown-content">{{ msg.content }}</div>
                         <script>
                             (function() {
@@ -460,7 +465,7 @@ HTML_TEMPLATE = """
                 const data = await response.json();
 
                 const aiDiv = document.createElement('div');
-                aiDiv.className = data.status === 'success' ? 'message model' : 'message error';
+                aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
                 
                 if (data.status === 'success') {
                     aiDiv.innerHTML = marked.parse(data.reply);
@@ -485,7 +490,7 @@ HTML_TEMPLATE = """
 """
 
 # ==========================================
-# 5. ルーティングとAPI処理（Tavily検索・Gemini SDK対応・自動リトライ機能付き）
+# 5. ルーティングとAPI処理（Tavily検索・Groq SDK対応・自動リトライ機能付き）
 # ==========================================
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -496,14 +501,15 @@ def index():
         db_history = load_memories_from_supabase()
 
         valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
-        image_parts = []
+        image_data_list = []
         
         for f in valid_files:
             file_bytes = f.read()
             mime_type = f.content_type or 'image/jpeg'
-            image_parts.append({
-                'mime_type': mime_type,
-                'data': file_bytes
+            base64_encoded = base64.b64encode(file_bytes).decode('utf-8')
+            image_data_list.append({
+                "mime_type": mime_type,
+                "base64": base64_encoded
             })
 
         final_user_message = str(user_message).strip()
@@ -536,23 +542,32 @@ def index():
             "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
         )
 
-        # Gemini SDKの contents 構築
-        contents_payload = []
+        # Groq (OpenAI互換) の messages 構築
+        messages_payload = [{"role": "system", "content": system_instruction}]
+        
         for m in db_history:
             role = m["role"]
             content = m["content"]
-            if role in ["user", "model"]:
-                contents_payload.append(content)
+            if role in ["user", "assistant"]:
+                messages_payload.append({"role": role, "content": content})
 
-        # 今回の入力（テキスト＋画像パーツ）
-        current_contents = []
-        if image_parts:
-            for part in image_parts:
-                current_contents.append(part)
+        # 今回の入力（テキスト＋画像パーツの組み立て）
+        current_user_content = []
         if actual_prompt_text:
-            current_contents.append(actual_prompt_text)
+            current_user_content.append({"type": "text", "text": actual_prompt_text})
             
-        contents_payload.append(current_contents)
+        for img in image_data_list:
+            current_user_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{img['mime_type']};base64,{img['base64']}"
+                }
+            })
+
+        if len(current_user_content) == 1 and current_user_content[0].get("type") == "text":
+            messages_payload.append({"role": "user", "content": current_user_content[0]["text"]})
+        else:
+            messages_payload.append({"role": "user", "content": current_user_content})
 
         # 自動リトライ処理（最大3回）
         max_retries = 3
@@ -560,31 +575,31 @@ def index():
         ai_reply = None
         last_error = None
 
+        if not client:
+            return jsonify({"status": "error", "error": "Groq APIキーが設定されていません。"})
+
         for attempt in range(1, max_retries + 1):
             try:
-                response = client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=contents_payload,
-                    config={
-                        'system_instruction': system_instruction,
-                        'temperature': 0.7,
-                    }
+                completion = client.chat.completions.create(
+                    model="llama-3.2-90b-vision-preview",
+                    messages=messages_payload,
+                    temperature=0.7,
                 )
-                ai_reply = str(response.text)
+                ai_reply = str(completion.choices[0].message.content)
                 break  # 成功したらループを抜ける
             except Exception as e:
                 last_error = str(e)
-                print(f"【Gemini API 試行 {attempt} 回目失敗】: {last_error}")
+                print(f"【Groq API 試行 {attempt} 回目失敗】: {last_error}")
                 if attempt < max_retries:
                     time.sleep(retry_delay * attempt)  # 2秒、4秒と待機時間を増やす
 
         if ai_reply is None:
-            print(f"【Gemini API エラー（全試行失敗）】: {last_error}")
+            print(f"【Groq API エラー（全試行失敗）】: {last_error}")
             return jsonify({"status": "error", "error": f"Error: {last_error}"})
 
         try:
             save_memory_to_supabase("user", db_save_message)
-            save_memory_to_supabase("model", ai_reply)
+            save_memory_to_supabase("assistant", ai_reply)
         except Exception as db_e:
             print(f"【DB保存時エラー】: {db_e}")
 
