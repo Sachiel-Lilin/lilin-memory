@@ -1,4 +1,5 @@
 import os
+import time
 import base64
 from flask import Flask, render_template_string, request, jsonify
 from google import genai
@@ -91,6 +92,7 @@ def summarize_and_cleanup_memories():
             
             text_to_summarize = "\n".join([f"{m['role']}: {m['content']}" for m in older_history])
             
+            # 要約時も念のためリトライまたはそのまま生成
             summary_response = client.models.generate_content(
                 model='gemini-3.6-flash',
                 contents=f"あなたは優秀な記録係です。以下のこれまでの会話の経緯を、重要な文脈や結論を含めて簡潔に日本語で要約してください。\n\n{text_to_summarize}",
@@ -483,7 +485,7 @@ HTML_TEMPLATE = """
 """
 
 # ==========================================
-# 5. ルーティングとAPI処理（Tavily検索・Gemini SDK対応）
+# 5. ルーティングとAPI処理（Tavily検索・Gemini SDK対応・自動リトライ機能付き）
 # ==========================================
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -552,25 +554,41 @@ def index():
             
         contents_payload.append(current_contents)
 
-        try:
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=contents_payload,
-                config={
-                    'system_instruction': system_instruction,
-                    'temperature': 0.7,
-                }
-            )
-            ai_reply = str(response.text)
+        # 自動リトライ処理（最大3回）
+        max_retries = 3
+        retry_delay = 2  # 秒
+        ai_reply = None
+        last_error = None
 
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = client.models.generate_content(
+                    model='gemini-3.6-flash',
+                    contents=contents_payload,
+                    config={
+                        'system_instruction': system_instruction,
+                        'temperature': 0.7,
+                    }
+                )
+                ai_reply = str(response.text)
+                break  # 成功したらループを抜ける
+            except Exception as e:
+                last_error = str(e)
+                print(f"【Gemini API 試行 {attempt} 回目失敗】: {last_error}")
+                if attempt < max_retries:
+                    time.sleep(retry_delay * attempt)  # 2秒、4秒と待機時間を増やす
+
+        if ai_reply is None:
+            print(f"【Gemini API エラー（全試行失敗）】: {last_error}")
+            return jsonify({"status": "error", "error": f"Error: {last_error}"})
+
+        try:
             save_memory_to_supabase("user", db_save_message)
             save_memory_to_supabase("model", ai_reply)
+        except Exception as db_e:
+            print(f"【DB保存時エラー】: {db_e}")
 
-            return jsonify({"status": "success", "reply": ai_reply})
-
-        except Exception as e:
-            print(f"【Gemini API エラー】: {str(e)}")
-            return jsonify({"status": "error", "error": f"Error: {str(e)}"})
+        return jsonify({"status": "success", "reply": ai_reply})
 
     history = load_memories_from_supabase()
     return render_template_string(HTML_TEMPLATE, history=history)
