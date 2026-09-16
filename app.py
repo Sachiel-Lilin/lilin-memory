@@ -3,11 +3,8 @@ from flask import Flask, render_template_string, request, jsonify
 from google import genai
 
 app = Flask(__name__)
-
-# クライアント初期化（Renderの環境変数 GEMINI_API_KEY を自動読み込み）
 client = genai.Client()
 
-# 簡易チャットUI付きのHTMLテンプレート
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -47,7 +44,7 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({ message: text })
                 });
                 const data = await res.json();
-                const replyText = data.reply || data.error || "返答がありません";
+                const replyText = data.reply !== undefined ? data.reply : "レスポンスエラー";
                 chatBox.innerHTML += `<div class="msg bot">${replyText}</div>`;
             } catch (err) {
                 chatBox.innerHTML += `<div class="msg bot">通信エラーが発生しました</div>`;
@@ -66,17 +63,16 @@ def index():
 @app.route('/chat', methods=['POST'])
 def chat():
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         user_message = data.get('message', '')
         
-        # 新SDKによる生成処理（モデル名：gemini-3.5-flash）
         response = client.models.generate_content(
             model='gemini-3.5-flash',
             contents=user_message,
         )
         return jsonify({'reply': response.text})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'reply': f'サーバーエラー: {str(e)}'})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
