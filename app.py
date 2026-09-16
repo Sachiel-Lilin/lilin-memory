@@ -1,4 +1,5 @@
 import os
+import base64
 from flask import Flask, render_template_string, request, jsonify
 from groq import Groq
 from supabase import create_client, Client
@@ -181,36 +182,49 @@ def index():
 
         db_history = load_memories_from_supabase()
 
-        # Groqへ送る過去のテキスト履歴を確実に文字列で構築
+        # Groqへ送る過去のテキスト履歴を構築
         groq_messages = []
         for msg in db_history:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
             groq_messages.append({"role": r, "content": c})
 
-        # 有効な添付ファイルの確認
+        # 有効な添付ファイルの確認とBase64エンコード
         valid_files = [f for f in uploaded_files if f and f.filename != '']
+        image_contents = []
         
+        for f in valid_files:
+            file_bytes = f.read()
+            encoded_image = base64.b64encode(file_bytes).decode('utf-8')
+            mime_type = f.content_type or 'image/jpeg'
+            
+            image_contents.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{encoded_image}"
+                }
+            })
+
         final_user_message = str(user_message).strip()
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # 画像が添付されている場合、メタデータをテキストとしてメッセージに付与する
+        # DB保存用のメタデータ文字列を作成
         db_save_message = final_user_message
         if valid_files:
             file_names = [f.filename for f in valid_files]
-            attachment_text = f" [画像添付: {', '.join(file_names)}]"
-            if final_user_message:
-                final_user_message += attachment_text
-            else:
-                final_user_message = f"画像を添付しました。{attachment_text}"
-            db_save_message = final_user_message
-        else:
-            if not final_user_message:
-                return jsonify({"status": "error", "error": "メッセージを入力してください。"})
+            db_save_message += f" [画像添付: {', '.join(file_names)}]"
 
-        # 今回のユーザーメッセージをGroq用ペイロードに追加（必ず文字列）
-        groq_messages.append({"role": "user", "content": str(final_user_message)})
+        # 今回のユーザーメッセージの構築（画像がある場合はマルチモーダル構造）
+        if image_contents:
+            current_content_payload = []
+            if final_user_message:
+                current_content_payload.append({"type": "text", "text": final_user_message})
+            current_content_payload.extend(image_contents)
+            
+            current_message_for_groq = {"role": "user", "content": current_content_payload}
+        else:
+            current_message_for_groq = {"role": "user", "content": final_user_message}
 
         system_prompt = {
             "role": "system", 
@@ -225,17 +239,18 @@ def index():
             )
         }
         
-        # 最終的な送信ペイロードの全contentが確実にstr型であることを保証
+        # 最終的な送信ペイロードの組み立て
         safe_payload = [system_prompt]
         for m in groq_messages:
             safe_payload.append({
                 "role": str(m["role"]),
                 "content": str(m["content"])
             })
+        safe_payload.append(current_message_for_groq)
 
         try:
             completion = client.chat.completions.create(
-                model="openai/gpt-oss-120b",
+                model="qwen/qwen3.8-27b",
                 messages=safe_payload,
                 temperature=0.7,
                 max_tokens=800
