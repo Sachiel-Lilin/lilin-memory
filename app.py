@@ -20,7 +20,7 @@ client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
-# 使用するモデル（画像認識・テキスト対応）
+# 使用するモデル
 TARGET_MODEL = "qwen/qwen3.8-27b"
 
 # ==========================================
@@ -45,10 +45,10 @@ def search_web(query: str) -> str:
         return "（Web検索中にエラーが発生しました）"
 
 # ==========================================
-# 3. Supabase 側でのデータ入出力・要約関数（フリーレン方式）
+# 3. Supabase 側でのデータ入出力・要約関数
 # ==========================================
 def load_memories_from_supabase() -> list:
-    """Supabaseの memories テーブルから会話履歴を読み込む"""
+    """Supabaseの memories テーブルから会話履歴を読み込む（直近のものを優先・制限）"""
     if not supabase:
         return []
     try:
@@ -79,31 +79,37 @@ def load_memories_from_supabase() -> list:
                 
                 history.append({"role": role, "content": str(content_text)})
                     
+        # トークン制限対策として、履歴が多すぎる場合は直近の8件に絞る
+        if len(history) > 8:
+            system_msgs = [m for m in history if m["role"] == "system"]
+            recent_msgs = [m for m in history if m["role"] != "system"][-8:]
+            history = system_msgs + recent_msgs
+
         return history
     except Exception as e:
         print(f"【DB読み込みエラー】: {e}")
         return []
 
 def summarize_and_cleanup_memories():
-    """履歴が10件を超えた場合、古いものを要約して整理する（フリーレン方式）"""
+    """履歴が多い場合、古いものを整理する"""
     if not supabase or not client:
         return
     try:
         history = load_memories_from_supabase()
         if len(history) > 10:
-            older_history = history[:-6]
-            recent_history = history[-6:]
+            older_history = history[:-5]
+            recent_history = history[-5:]
             
             text_to_summarize = "\n".join([f"{m['role']}: {m['content']}" for m in older_history])
             
-            # 要約用のGroqリクエスト
             summary_completion = client.chat.completions.create(
                 model=TARGET_MODEL,
                 messages=[
-                    {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話の経緯を、重要な文脈や結論を含めて簡潔に日本語で要約してください。"},
+                    {"role": "system", "content": "あなたは優秀な記録係です。以下の会話の経緯を簡潔に日本語で要約してください。"},
                     {"role": "user", "content": text_to_summarize}
                 ],
-                temperature=0.3
+                temperature=0.3,
+                max_tokens=200
             )
             summary_text = summary_completion.choices[0].message.content.strip()
             
@@ -123,7 +129,7 @@ def summarize_and_cleanup_memories():
         print(f"【要約処理エラー】: {e}")
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに保存し、10件超えたら要約を実行する"""
+    """Supabaseの memories テーブルに保存する"""
     if not supabase:
         return
     try:
@@ -580,10 +586,12 @@ def index():
 
         for attempt in range(1, max_retries + 1):
             try:
+                # max_tokensを指定してトークン制限エラーを回避
                 completion = client.chat.completions.create(
                     model=TARGET_MODEL,
                     messages=messages_payload,
                     temperature=0.7,
+                    max_tokens=400
                 )
                 ai_reply = str(completion.choices[0].message.content)
                 break
