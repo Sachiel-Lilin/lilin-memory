@@ -56,7 +56,7 @@ def load_memories_from_supabase() -> list:
         return []
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに文字列として保存する"""
+    """Supabaseの memories テーブルに文字列として保存する（画像データは除外し、添付情報のみ記録）"""
     try:
         if not isinstance(content, str):
             content = str(content)
@@ -108,7 +108,7 @@ HTML_TEMPLATE = """
         <label class="file-label" for="images">＋画像</label>
         <input type="file" id="images" name="images" accept="image/*" multiple onchange="updateFileCount()">
         <span id="file-count"></span>
-        <input type="text" id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off" required>
+        <input type="text" id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off">
         <button type="submit">送信</button>
     </form>
 
@@ -138,7 +138,7 @@ HTML_TEMPLATE = """
             }
 
             const userText = msgInput.value;
-            const hasImages = fileInput.files.length > 0;
+            const fileCount = fileInput.files.length;
             
             msgInput.value = '';
             fileInput.value = '';
@@ -146,7 +146,7 @@ HTML_TEMPLATE = """
 
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
-            userDiv.textContent = userText + (hasImages ? ' [画像添付]' : '');
+            userDiv.textContent = userText + (fileCount > 0 ? ` [画像添付: ${fileCount}枚]` : '');
             chatContainer.appendChild(userDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
 
@@ -182,25 +182,52 @@ def index():
 
         db_history = load_memories_from_supabase()
 
-        # Groqへ送るメッセージを完全に文字列のみで構築
+        # Groqへ送る過去のテキスト履歴を構築
         groq_messages = []
         for msg in db_history:
             r = str(msg.get("role", "user"))
             c = str(msg.get("content", ""))
             groq_messages.append({"role": r, "content": c})
 
-        has_images = any(f and f.filename != '' for f in uploaded_files)
-        final_user_message = str(user_message)
-        if has_images:
-            final_user_message += " [画像が送信されました]"
+        # 画像データの処理（API送信にはマルチモーダル形式を使い、DB保存にはメタデータのみを使用）
+        image_contents = []
+        valid_files = [f for f in uploaded_files if f and f.filename != '']
+        
+        for f in valid_files:
+            file_bytes = f.read()
+            encoded_image = base64.b64encode(file_bytes).decode('utf-8')
+            mime_type = f.content_type or 'image/jpeg'
+            
+            # Groq（ビジョン対応モデル）が読み込める形式
+            image_contents.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{encoded_image}"
+                }
+            })
 
-        if not final_user_message.strip():
+        final_user_message = str(user_message)
+        if not final_user_message.strip() and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # 今回のユーザーメッセージも必ず文字列として追加
-        groq_messages.append({"role": "user", "content": final_user_message})
+        # DB保存用の文字列（画像バイナリは含めず、どのような画像が添付されたかのメタデータのみを記録）
+        db_save_message = final_user_message
+        if valid_files:
+            file_names = [f.filename for f in valid_files]
+            db_save_message += f" [画像添付: {', '.join(file_names)}]"
 
-        # システムプロンプトにアイデンティティ、誠実の掟、死海文書の読み方を統合
+        # 今回のユーザーメッセージをGroq用ペイロードに組み立て
+        # 画像がある場合はマルチモーダル用のリスト構造、ない場合は通常のテキスト構造にする
+        if image_contents:
+            current_content_payload = []
+            if final_user_message.strip():
+                current_content_payload.append({"type": "text", "text": final_user_message})
+            current_content_payload.extend(image_contents)
+            
+            current_message_for_groq = {"role": "user", "content": current_content_payload}
+        else:
+            current_message_for_groq = {"role": "user", "content": final_user_message}
+
         system_prompt = {
             "role": "system", 
             "content": (
@@ -214,25 +241,26 @@ def index():
             )
         }
         
-        # 最終的な送信ペイロードの全contentが確実にstr型であることを最終検証
+        # 最終的な送信ペイロードの組み立て
         safe_payload = [system_prompt]
         for m in groq_messages:
             safe_payload.append({
                 "role": str(m["role"]),
                 "content": str(m["content"])
             })
+        safe_payload.append(current_message_for_groq)
 
         try:
             completion = client.chat.completions.create(
-                model="openai/gpt-oss-120b",
+                model="openai/gpt-oss-120b", # ※マルチモーダル（ビジョン）対応モデル名に合わせ適宜調整してください
                 messages=safe_payload,
                 temperature=0.7,
                 max_tokens=800
             )
             ai_reply = str(completion.choices[0].message.content)
 
-            # データベースへ安全に保存
-            save_memory_to_supabase("user", final_user_message)
+            # データベースへは画像本体ではなく、メタデータ付きのテキストとして安全に保存
+            save_memory_to_supabase("user", db_save_message)
             save_memory_to_supabase("assistant", ai_reply)
 
             return jsonify({"status": "success", "reply": ai_reply})
