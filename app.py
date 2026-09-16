@@ -18,7 +18,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 USER_ID = "web_user_default"
 
 # ==========================================
-# 2. Supabase 側でのデータ入出力関数
+# 2. Supabase 側でのデータ入出力関数（エラー可視化版）
 # ==========================================
 def load_memories_from_supabase() -> list:
     """Supabaseの memories テーブルから会話履歴を読み込む"""
@@ -26,39 +26,37 @@ def load_memories_from_supabase() -> list:
         response = supabase.table("memories") \
             .select("role, content") \
             .eq("user_id", USER_ID) \
-            .order("created_at", desc=True) \
+            .order("created_at", desc=False) \
             .limit(20) \
             .execute()
         
         history = []
         if response.data:
-            # 昇順（古い順）に並べ替え
-            rows = sorted(response.data, key=lambda x: x.get("created_at", ""))
-            for row in rows:
-                role = row.get("role", "user")
+            for row in response.data:
+                role = str(row.get("role", "user"))
                 content = row.get("content", "")
-                # 【重要】Groqに渡す過去ログの content は必ず文字列に強制変換する
                 if not isinstance(content, str):
                     content = str(content)
                 history.append({"role": role, "content": content})
         return history
     except Exception as e:
-        print(f"履歴読み込みエラー: {e}")
+        print(f"【DB読み込みエラー】: {e}")
         return []
 
 def save_memory_to_supabase(role: str, content: str):
-    """Supabaseの memories テーブルに新しいメッセージを保存する（画像は保存せずテキストのみ）"""
+    """Supabaseの memories テーブルに新しいメッセージを保存する"""
     try:
         if not isinstance(content, str):
             content = str(content)
             
-        supabase.table("memories").insert({
+        res = supabase.table("memories").insert({
             "user_id": USER_ID,
             "role": role,
             "content": content
         }).execute()
+        print(f"【DB保存成功】 {role}: {content[:30]}...")
     except Exception as e:
-        print(f"履歴保存エラー: {e}")
+        print(f"【DB保存エラー】: {e}")
 
 # ==========================================
 # 3. HTML テンプレート（モバイルファースト）
@@ -174,13 +172,12 @@ def index():
         # データベースから履歴をロード
         db_history = load_memories_from_supabase()
 
-        # Groq送信用メッセージの構築
+        # Groq送信用メッセージの構築（確実にstringに変換）
         groq_messages = []
         for msg in db_history:
-            c = msg["content"]
-            if not isinstance(c, str):
-                c = str(c)
-            groq_messages.append({"role": msg["role"], "content": c})
+            role = str(msg.get("role", "user"))
+            content = str(msg.get("content", ""))
+            groq_messages.append({"role": role, "content": content})
 
         # 今回のユーザー入力（マルチモーダル対応）
         current_content = []
@@ -207,7 +204,7 @@ def index():
         # 今回のメッセージをGroq配列に追加
         groq_messages.append({"role": "user", "content": current_content if has_images else user_message})
 
-        # システムプロンプト（ペルソナ設定）
+        # システムプロンプト
         system_prompt = {
             "role": "system", 
             "content": "あなたは咲鳥リン（さきとりりん）です。ユーザーをサキエルと呼びます。落ち着いた温かみのある良き理解者として、丁寧かつ知的な口調で応答してください。"
@@ -224,15 +221,15 @@ def index():
             )
             ai_reply = completion.choices[0].message.content
 
-            # データベースへ保存するテキスト（画像は保存せずテキストのみ）
+            # データベースへ保存
             db_user_content = user_message + (" [画像送信]" if has_images else "")
-            
             save_memory_to_supabase("user", db_user_content)
             save_memory_to_supabase("assistant", ai_reply)
 
             return jsonify({"status": "success", "reply": ai_reply})
 
         except Exception as e:
+            print(f"【Groq API エラー】: {str(e)}")
             return jsonify({"status": "error", "error": f"Error: {str(e)}"})
 
     # GETアクセス時
