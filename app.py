@@ -63,7 +63,7 @@ def index():
         try:
             # 新SDKでのコンテンツ生成（例: gemini-2.5-flash）
             response = client.models.generate_content(
-                model='gemini3.5-flash',
+                model='gemini-3.5-flash',
                 contents=chat_contents,
             )
             ai_reply = str(response.text)
