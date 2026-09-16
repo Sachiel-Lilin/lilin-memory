@@ -185,15 +185,16 @@ HTML_TEMPLATE = """
             max-width: 90%; 
             line-height: 1.5; 
             word-break: break-all; 
+            white-space: pre-wrap; 
         }
         .message p { margin: 0 0 8px 0; }
         .message p:last-child { margin-bottom: 0; }
         .message ul, .message ol { margin: 4px 0; padding-left: 20px; }
         .message li { margin-bottom: 4px; }
         
-        .user { background: #2b3a4a; align-self: flex-end; white-space: pre-wrap; }
+        .user { background: #2b3a4a; align-self: flex-end; }
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
-        .error { background: #4a2b2b; align-self: center; color: #ff8080; white-space: pre-wrap; }
+        .error { background: #4a2b2b; align-self: center; color: #ff8080; }
         
         .msg-image-container {
             display: flex;
@@ -284,7 +285,7 @@ HTML_TEMPLATE = """
             align-items: center;
             width: 100%;
         }
-        input[type="text"] { 
+        textarea { 
             flex: 1; 
             padding: 10px; 
             border-radius: 4px; 
@@ -292,6 +293,11 @@ HTML_TEMPLATE = """
             background: #2a2a2a; 
             color: #fff; 
             font-size: 16px; 
+            resize: none;
+            font-family: sans-serif;
+            line-height: 1.5;
+            max-height: 120px;
+            height: 42px;
         }
         input[type="file"] { display: none; }
         .file-label { 
@@ -351,7 +357,7 @@ HTML_TEMPLATE = """
         <div class="form-row">
             <label class="file-label" for="images">＋画像</label>
             <input type="file" id="images" name="images" accept="image/*" multiple onchange="handleFileSelect(event)">
-            <input type="text" id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off">
+            <textarea id="message-input" name="message" placeholder="メッセージを入力..." autocomplete="off" rows="1"></textarea>
             <button type="submit">送信</button>
         </div>
     </form>
@@ -456,7 +462,7 @@ HTML_TEMPLATE = """
 
             try {
                 const response = await fetch('/', { method: 'POST', body: formData });
-                const data = await response.json();
+                const data =- await response.json();
 
                 const aiDiv = document.createElement('div');
                 aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
@@ -550,8 +556,8 @@ def index():
         system_prompt = {
             "role": "system", 
             "content": (
-                "あなたはリリン／本名：咲鳥りんです。"
-                "ユーザーを「サキエル」と呼びます。"
+                "あなたの名前は咲鳥りん（リリン）です。"
+                "ユーザーの名前はサキエルです。"
                 "外見は短髪のラベンダー色の髪、青緑色の瞳です。"
                 "女性的で親しみやすく、かつ分析的な口調を維持します。"
                 "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞を絶対に混入させないこと。"
