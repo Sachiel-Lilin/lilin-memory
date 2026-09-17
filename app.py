@@ -126,8 +126,8 @@ HTML_TEMPLATE = """
         header { background: #1f1f1f; padding: 12px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; flex-shrink: 0; }
         #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
         
-        /* 【文字サイズ調整】メッセージ全体の文字をコンパクト（14px）に設定 */
-        .message { padding: 10px 14px; border-radius: 8px; max-width: 90%; line-height: 1.4; word-break: break-all; white-space: pre-wrap; font-size: 14px; }
+        /* 【文字サイズ変更】さらにすっきり見やすい13pxに設定 */
+        .message { padding: 10px 14px; border-radius: 8px; max-width: 90%; line-height: 1.4; word-break: break-all; white-space: pre-wrap; font-size: 13px; }
         
         /* 【絶対死守：すべての余白を強制リセット】 */
         .message * {
@@ -137,7 +137,7 @@ HTML_TEMPLATE = """
         .message p, .message h1, .message h2, .message h3, .message h4, .message h5, .message h6, .message ul, .message ol {
             margin: 0 !important;
             padding: 0 !important;
-            font-size: 14px !important; /* 見出しなどの文字サイズも強制統一 */
+            font-size: 13px !important;
         }
         .message ul, .message ol {
             padding-left: 16px !important;
