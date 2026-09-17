@@ -74,7 +74,6 @@ def summarize_and_cleanup_memories():
             
             text_to_summarize = "\n".join([r.get("content", "") for r in older_rows])
             
-            # 【修正点】ここで括弧とブラケットの対応を正しく修正しました
             summary_completion = client.chat.completions.create(
                 model=TARGET_MODEL,
                 messages=[
@@ -328,7 +327,7 @@ def index():
                 model=TARGET_MODEL,
                 messages=messages_payload,
                 temperature=0.7,
-                max_tokens=600
+                max_tokens=2048  # ← ここを2048に引き上げました
             )
             ai_reply = str(completion.choices[0].message.content)
         except Exception as e:
