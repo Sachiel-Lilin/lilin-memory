@@ -85,15 +85,12 @@ def summarize_and_cleanup_memories():
             )
             summary_text = summary_completion.choices[0].message.content.strip()
             
-            # テーブルを一度全削除して綺麗にする
             supabase.table("memories").delete().neq("content", "___DUMMY_NEVER_MATCH___").execute()
             
-            # 要約をシステムメッセージとして保存
             supabase.table("memories").insert({
                 "content": f"system: 【要約】 {summary_text}"
             }).execute()
             
-            # 直近のやり取りを復元
             for r in recent_rows:
                 original_content = r.get("content")
                 if original_content.startswith("user: "):
@@ -128,7 +125,9 @@ HTML_TEMPLATE = """
         body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 0; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         header { background: #1f1f1f; padding: 12px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; flex-shrink: 0; }
         #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
-        .message { padding: 12px 16px; border-radius: 8px; max-width: 90%; line-height: 1.4; word-break: break-all; white-space: pre-wrap; }
+        
+        /* 【文字サイズ調整】メッセージ全体の文字をコンパクト（14px）に設定 */
+        .message { padding: 10px 14px; border-radius: 8px; max-width: 90%; line-height: 1.4; word-break: break-all; white-space: pre-wrap; font-size: 14px; }
         
         /* 【絶対死守：すべての余白を強制リセット】 */
         .message * {
@@ -138,6 +137,7 @@ HTML_TEMPLATE = """
         .message p, .message h1, .message h2, .message h3, .message h4, .message h5, .message h6, .message ul, .message ol {
             margin: 0 !important;
             padding: 0 !important;
+            font-size: 14px !important; /* 見出しなどの文字サイズも強制統一 */
         }
         .message ul, .message ol {
             padding-left: 16px !important;
