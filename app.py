@@ -85,26 +85,23 @@ def summarize_and_cleanup_memories():
             )
             summary_text = summary_completion.choices[0].message.content.strip()
             
-            supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
+            # テーブルを一度全削除して綺麗にする
+            supabase.table("memories").delete().neq("content", "___DUMMY_NEVER_MATCH___").execute()
             
+            # 要約をシステムメッセージとして保存
             supabase.table("memories").insert({
                 "content": f"system: 【要約】 {summary_text}"
             }).execute()
             
+            # 直近のやり取りを復元
             for r in recent_rows:
                 original_content = r.get("content")
-                if not original_content.startswith("user: ") and not original_content.startswith("assistant: ") and not original_content.startswith("system: "):
-                    continue
                 if original_content.startswith("user: "):
-                    role, body = "user", original_content[6:]
+                    supabase.table("memories").insert({"content": original_content}).execute()
                 elif original_content.startswith("assistant: "):
-                    role, body = "assistant", original_content[11:]
+                    supabase.table("memories").insert({"content": original_content}).execute()
                 elif original_content.startswith("system: "):
-                    role, body = "system", original_content[8:]
-                else:
-                    continue
-                
-                supabase.table("memories").insert({"content": f"{role}: {body}"}).execute()
+                    supabase.table("memories").insert({"content": original_content}).execute()
                 
     except Exception as e:
         print(f"【要約処理エラー】: {e}")
@@ -194,11 +191,9 @@ HTML_TEMPLATE = """
         </div>
     </form>
     <script>
-        // マークダウン変換時に余分な改行や空段落をあらかじめ置換して排除する
         function renderMarkdown(rawText) {
             let cleaned = rawText.replace(/\\n\\s*\\n/g, '\\n');
             let html = marked.parse(cleaned);
-            // 生成されたHTMLから空のpタグや無駄なスペースを除去
             html = html.replace(/<p><\\/p>/g, '').replace(/\\s+/g, ' ');
             return html;
         }
