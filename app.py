@@ -59,48 +59,43 @@ def load_memories_from_supabase() -> list:
         return []
 
 def summarize_and_cleanup_memories():
-    """【フリーレン方式】古い記憶を美しく要約し、重要な文脈を失わずに次へ継承する"""
+    """【軽量・フリーレン方式】メモリ制限を考慮し、安全に記憶を圧縮する"""
     if not supabase or not client:
         return
     try:
         response = supabase.table("memories").select("content, created_at").order("created_at", desc=False).execute()
         all_rows = response.data if response.data else []
         
-        # 履歴が16件を超えたら、古い部分をまとめてフリーレン方式で要約する
-        if len(all_rows) > 16:
-            older_rows = all_rows[:-8]
-            recent_rows = all_rows[-8:]
+        # 履歴が12件を超えたら軽量に要約して古いものをクリア（メモリ保護）
+        if len(all_rows) > 12:
+            older_rows = all_rows[:-6]
+            recent_rows = all_rows[-6:]
             
             text_to_summarize = "\n".join([r.get("content", "") for r in older_rows])
             
-            # フリーレンの魔導書のように、これまでの歴史や取り決め、ハイトレ手法の前提を凝縮して要約させる
             summary_completion = client.chat.completions.create(
                 model=TARGET_MODEL,
                 messages=[
-                    {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話履歴から、サキエルとの重要な約束事、ハイトレ手法の前提知識（MTF、20EMA/200EMA、資金管理等）、およびこれまでの経緯を、後から読んでも絶対に忘れないように詳細かつコンパクトに日本語で要約（魔導書の記憶継承）してください。出力は必ず要約テキストのみを返してください。"},
+                    {"role": "system", "content": "これまでの会話履歴から、重要な約束事や前提知識を極めてコンパクトに日本語で要約してください。出力は要約テキストのみにしてください。"},
                     {"role": "user", "content": text_to_summarize}
                 ],
                 temperature=0.3,
-                max_tokens=400
+                max_tokens=250
             )
             
-            # 安全にテキストを取り出す（空対策）
             summary_text = ""
             if summary_completion and summary_completion.choices:
                 msg = summary_completion.choices[0].message
                 if hasattr(msg, "content") and msg.content:
                     summary_text = msg.content.strip()
             
-            # 要約が空でなければテーブルをリセットして置き換える
             if summary_text:
                 supabase.table("memories").delete().neq("content", "___DUMMY_NEVER_MATCH___").execute()
                 
-                # 要約を最初のシステム記憶として書き込む
                 supabase.table("memories").insert({
                     "content": f"system: 【フリーレンの記憶継承（要約）】\n{summary_text}"
                 }).execute()
                 
-                # 直近のやり取りをそのまま復元
                 for r in recent_rows:
                     original_content = r.get("content")
                     if original_content:
@@ -131,34 +126,11 @@ HTML_TEMPLATE = """
         body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 0; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         header { background: #1f1f1f; padding: 12px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; flex-shrink: 0; }
         #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
-        
-        /* 【文字サイズと行間のコンパクト化】 */
         .message { padding: 10px 14px; border-radius: 8px; max-width: 90%; line-height: 1.3; word-break: break-all; white-space: pre-wrap; font-size: 13px; }
-        
-        /* 【行間・余白の完全ギチギチ詰め】 */
-        .message * {
-            margin: 0 !important;
-            padding: 0 !important;
-            line-height: 1.3 !important;
-        }
-        .message p, .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 {
-            margin: 0 !important;
-            padding: 0 !important;
-            font-size: 13px !important;
-            margin-bottom: 2px !important;
-        }
-        .message ul, .message ol {
-            margin: 0 !important;
-            padding-left: 14px !important;
-            margin-bottom: 2px !important;
-        }
-        .message li {
-            margin: 0 !important;
-            padding: 0 !important;
-            list-style-type: disc;
-            margin-bottom: 1px !important;
-        }
-
+        .message * { margin: 0 !important; padding: 0 !important; line-height: 1.3 !important; }
+        .message p, .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 { margin-bottom: 2px !important; font-size: 13px !important; }
+        .message ul, .message ol { padding-left: 14px !important; margin-bottom: 2px !important; }
+        .message li { list-style-type: disc; margin-bottom: 1px !important; }
         .user { background: #2b3a4a; align-self: flex-end; }
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
         .error { background: #4a2b2b; align-self: center; color: #ff8080; }
@@ -210,11 +182,9 @@ HTML_TEMPLATE = """
             html = html.replace(/<p><\\/p>/g, '').replace(/\\s+/g, ' ');
             return html;
         }
-
         document.querySelectorAll('.markdown-content').forEach(el => {
             el.innerHTML = renderMarkdown(el.textContent);
         });
-
         const chatContainer = document.getElementById('chat-container');
         chatContainer.scrollTop = chatContainer.scrollHeight;
 
@@ -287,9 +257,7 @@ HTML_TEMPLATE = """
                     aiDiv.textContent = data.error;
                 }
                 chatContainer.appendChild(aiDiv);
-                
                 aiDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
             } catch (err) {
                 const errDiv = document.createElement('div');
                 errDiv.className = 'message error';
@@ -310,11 +278,7 @@ def index():
         uploaded_files = request.files.getlist("images")
         db_history = load_memories_from_supabase()
 
-        valid_files = []
-        for f in uploaded_files:
-            if f and f.filename != '':
-                valid_files.append(f)
-        valid_files = valid_files[:2]
+        valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
 
         image_data_list = []
         for f in valid_files:
@@ -340,14 +304,8 @@ def index():
             "ユーザーをサキエルと呼びます。"
             "外見は短髪のラベンダー色の髪、青緑色の瞳です。"
             "とてもフレンドリーで優しく、親しみやすい話し方をしてください。"
-            "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞を絶対に混入させないこと。"
+            "【最重要制約】出力は必ず完全に自然な日本語のみで行い、外国語の助詞を絶対に混入させないこと。"
             "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
-            "【ハイトレ手法の前提知識（絶対に忘れないこと）】"
-            "1. マルチタイムフレーム分析: 4時間足（全体トレンド・バイアス）、M15（15分足で方向性確認）、M5（5分足でエントリータイミング測定）の組み合わせ。"
-            "2. 移動平均線: 20EMAと200EMAの両方を活用する。"
-            "3. 資金管理: 退場しないこと（損切りは設定しない、資金分割とロット管理）を徹底する。"
-            "【出力フォーマット制限】"
-            "結論ファーストを意識しつつ、堅苦しくならずフランクに、要点を分かりやすくまとめて答えてね。"
         )
 
         messages_payload = [{"role": "system", "content": system_instruction}]
@@ -372,7 +330,7 @@ def index():
                 model=TARGET_MODEL,
                 messages=messages_payload,
                 temperature=0.7,
-                max_tokens=2048
+                max_tokens=1024
             )
             if completion and completion.choices:
                 msg_obj = completion.choices[0].message
