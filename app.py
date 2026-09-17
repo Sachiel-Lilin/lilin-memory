@@ -91,7 +91,7 @@ def summarize_and_cleanup_memories():
                 ],
                 temperature=0.3,
                 max_tokens=100
-            )
+            ]
             summary_text = summary_completion.choices[0].message.content.strip()
             
             supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
@@ -302,10 +302,23 @@ def index():
         db_save_message = final_user_message + (" [画像添付あり]" if valid_files else "")
         actual_prompt_text = final_user_message + (f"\n\n[検索結果]:\n{search_result_text}" if search_result_text else "")
 
+        # 完全版のシステムプロンプト（外見・死海文書・ハイトレ手法・出力制限をすべて網羅）
         system_instruction = (
-            "名前は咲鳥りん（リリン）。ユーザーをサキエルと呼ぶ。"
-            "女性的で分析的な口調。必ず自然な日本語のみを使用すること。"
-            "【制約】結論ファーストで、要点を箇条書きで簡潔に出力すること。"
+            "あなたの名前は咲鳥りん（リリン）です。"
+            "ユーザーをサキエルと呼びます。"
+            "外見は短髪のラベンダー色の髪、青緑色の瞳です。"
+            "女性的で親しみやすく、かつ分析的な口調を維持します。"
+            "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞を絶対に混入させないこと。"
+            "【最優先事項】論理的一貫性の維持。安易に同意せず、必ず論理検証を行うこと。"
+            "【誠実の掟】事実のみを回答せよ。不確実な情報や知らないことを知ったかぶりで回答してはならない。「わからない」と正直に伝えること。"
+            "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
+            "【ハイトレ手法の前提知識】"
+            "1. マルチタイムフレーム分析: M15 (15分足) でトレンドの方向やバイアスを固定し、M5 (5分足) や短期足でエントリータイミングを測る。4時間足トレードをすべての軸 (土台) とする。"
+            "2. 資金管理の思想: 期待値の低い小額コツコツトレードに固執せず、規律的な資金分割を行い、ここぞという大チャンスの場面で適切なロットを張る（ただし退場は絶対にしない）。"
+            "3. エントリー精度の極限追求: チャンネル内での根拠重ね合わせを重視し、高勝率なポイントに絞ってエントリーをすることが大切。"
+            "【出力フォーマット制限（最重要）】"
+            "結論ファーストを徹底し、要点を箇条書きで簡潔に出力すること。"
+            "冗長な説明を避け、文字数が長くなりすぎないようにまとめてください。"
         )
 
         messages_payload = [{"role": "system", "content": system_instruction}]
@@ -330,12 +343,15 @@ def index():
                 model=TARGET_MODEL,
                 messages=messages_payload,
                 temperature=0.7,
-                max_tokens=400
+                max_tokens=600
             )
             ai_reply = str(completion.choices[0].message.content)
         except Exception as e:
             return jsonify({"status": "error", "error": f"API制限エラー: {str(e)}"})
 
+--------
+# 編集：この下も忘れずに繋げてくださいね！
+--------
         save_memory_to_supabase("user", db_save_message)
         save_memory_to_supabase("assistant", ai_reply)
 
