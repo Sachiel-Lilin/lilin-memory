@@ -54,7 +54,8 @@ def load_memories_from_supabase() -> list:
                     history.append({"role": "system", "content": raw_content[8:]})
                     
         system_msgs = [m for m in history if m["role"] == "system"]
-        recent_msgs = [m for m in history if m["role"] != "system"][-4:]
+        # 直近のメッセージ保持数を6件（3往復分）に変更
+        recent_msgs = [m for m in history if m["role"] != "system"][-6:]
         
         return system_msgs + recent_msgs
     except Exception as e:
@@ -68,9 +69,10 @@ def summarize_and_cleanup_memories():
         response = supabase.table("memories").select("content, created_at").order("created_at", desc=False).execute()
         all_rows = response.data if response.data else []
         
-        if len(all_rows) > 8:
-            older_rows = all_rows[:-4]
-            recent_rows = all_rows[-4:]
+        # 溜まるメッセージが一定数（例: 12件）を超えたら古いものをまとめて要約して整理する
+        if len(all_rows) > 12:
+            older_rows = all_rows[:-6]
+            recent_rows = all_rows[-6:]
             
             text_to_summarize = "\n".join([r.get("content", "") for r in older_rows])
             
@@ -81,18 +83,35 @@ def summarize_and_cleanup_memories():
                     {"role": "user", "content": text_to_summarize}
                 ],
                 temperature=0.3,
-                max_tokens=100
+                max_tokens=150
             )
             summary_text = summary_completion.choices[0].message.content.strip()
             
+            # 既存のテーブルデータを一度全削除
             supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
             
+            # 要約をsystemロールとして最初に挿入
             supabase.table("memories").insert({
                 "content": f"system: 【要約】 {summary_text}"
             }).execute()
             
+            # 直近のメッセージを再挿入
             for r in recent_rows:
-                supabase.table("memories").insert({"content": r.get("content")}).execute()
+                # すでに "role: 内容" の形で保存されているためそのまま入れる
+                original_content = r.get("content")
+                if not original_content.startswith("user: ") and not original_content.startswith("assistant: ") and not original_content.startswith("system: "):
+                    continue
+                # プレフィックスを剥がす
+                if original_content.startswith("user: "):
+                    role, body = "user", original_content[6:]
+                elif original_content.startswith("assistant: "):
+                    role, body = "assistant", original_content[11:]
+                elif original_content.startswith("system: "):
+                    role, body = "system", original_content[8:]
+                else:
+                    continue
+                
+                supabase.table("memories").insert({"content": f"{role}: {body}"}).execute()
                 
     except Exception as e:
         print(f"【要約処理エラー】: {e}")
@@ -327,7 +346,7 @@ def index():
                 model=TARGET_MODEL,
                 messages=messages_payload,
                 temperature=0.7,
-                max_tokens=2048  # ← ここを2048に引き上げました
+                max_tokens=2048
             )
             ai_reply = str(completion.choices[0].message.content)
         except Exception as e:
