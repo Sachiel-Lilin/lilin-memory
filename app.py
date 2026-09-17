@@ -302,7 +302,7 @@ def index():
         db_save_message = final_user_message + (" [画像添付あり]" if valid_files else "")
         actual_prompt_text = final_user_message + (f"\n\n[検索結果]:\n{search_result_text}" if search_result_text else "")
 
-        # 完全版のシステムプロンプト（外見・死海文書・ハイトレ手法・出力制限をすべて網羅）
+        # 完全版のシステムプロンプト
         system_instruction = (
             "あなたの名前は咲鳥りん（リリン）です。"
             "ユーザーをサキエルと呼びます。"
@@ -349,9 +349,6 @@ def index():
         except Exception as e:
             return jsonify({"status": "error", "error": f"API制限エラー: {str(e)}"})
 
---------
-# 編集：この下も忘れずに繋げてくださいね！
---------
         save_memory_to_supabase("user", db_save_message)
         save_memory_to_supabase("assistant", ai_reply)
 
