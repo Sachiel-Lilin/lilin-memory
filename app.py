@@ -133,28 +133,20 @@ HTML_TEMPLATE = """
         #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
         .message { padding: 12px 16px; border-radius: 8px; max-width: 90%; line-height: 1.4; word-break: break-all; white-space: pre-wrap; }
         
-        /* 【極限の隙間ゼロ化スタイル】 */
-        .message p {
+        /* 【絶対死守：すべての余白を強制リセット】 */
+        .message * {
             margin: 0 !important;
             padding: 0 !important;
-            margin-bottom: 6px !important;
         }
-        .message p:last-child {
-            margin-bottom: 0 !important;
+        .message p, .message h1, .message h2, .message h3, .message h4, .message h5, .message h6, .message ul, .message ol {
+            margin: 0 !important;
+            padding: 0 !important;
         }
         .message ul, .message ol {
-            margin: 0 !important;
-            padding-left: 18px !important;
-            margin-bottom: 6px !important;
-        }
-        .message ul:last-child, .message ol:last-child {
-            margin-bottom: 0 !important;
+            padding-left: 16px !important;
         }
         .message li {
-            margin: 0 !important;
-            padding: 0 !important;
-            margin-top: 0 !important;
-            margin-bottom: 0 !important;
+            list-style-type: disc;
         }
 
         .user { background: #2b3a4a; align-self: flex-end; }
@@ -202,8 +194,17 @@ HTML_TEMPLATE = """
         </div>
     </form>
     <script>
+        // マークダウン変換時に余分な改行や空段落をあらかじめ置換して排除する
+        function renderMarkdown(rawText) {
+            let cleaned = rawText.replace(/\\n\\s*\\n/g, '\\n');
+            let html = marked.parse(cleaned);
+            // 生成されたHTMLから空のpタグや無駄なスペースを除去
+            html = html.replace(/<p><\\/p>/g, '').replace(/\\s+/g, ' ');
+            return html;
+        }
+
         document.querySelectorAll('.markdown-content').forEach(el => {
-            el.innerHTML = marked.parse(el.textContent);
+            el.innerHTML = renderMarkdown(el.textContent);
         });
 
         const chatContainer = document.getElementById('chat-container');
@@ -273,7 +274,7 @@ HTML_TEMPLATE = """
                 const aiDiv = document.createElement('div');
                 aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
                 if (data.status === 'success') {
-                    aiDiv.innerHTML = marked.parse(data.reply);
+                    aiDiv.innerHTML = renderMarkdown(data.reply);
                 } else {
                     aiDiv.textContent = data.error;
                 }
