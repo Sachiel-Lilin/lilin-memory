@@ -20,8 +20,8 @@ client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
-# 使用するモデル
-TARGET_MODEL = "qwen/qwen3.8-27b"
+# 使用するモデル（Llamaシリーズに変更してトークン制限を回避）
+TARGET_MODEL = "llama-3.1-8b-instant"
 
 # ==========================================
 # 2. Tavily検索関数
