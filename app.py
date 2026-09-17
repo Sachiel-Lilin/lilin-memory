@@ -53,55 +53,54 @@ def load_memories_from_supabase() -> list:
                 elif raw_content.startswith("system: "):
                     history.append({"role": "system", "content": raw_content[8:]})
                     
-        system_msgs = [m for m in history if m["role"] == "system"]
-        recent_msgs = [m for m in history if m["role"] != "system"][-6:]
-        
-        return system_msgs + recent_msgs
+        return history
     except Exception as e:
         print(f"【DB読み込みエラー】: {e}")
         return []
 
 def summarize_and_cleanup_memories():
+    """【フリーレン方式】古い記憶を美しく要約し、重要な文脈を失わずに次へ継承する"""
     if not supabase or not client:
         return
     try:
         response = supabase.table("memories").select("content, created_at").order("created_at", desc=False).execute()
         all_rows = response.data if response.data else []
         
-        if len(all_rows) > 12:
-            older_rows = all_rows[:-6]
-            recent_rows = all_rows[-6:]
+        # 履歴が16件を超えたら、古い部分をまとめてフリーレン方式で要約する
+        if len(all_rows) > 16:
+            older_rows = all_rows[:-8]
+            recent_rows = all_rows[-8:]
             
             text_to_summarize = "\n".join([r.get("content", "") for r in older_rows])
             
+            # フリーレンの魔導書のように、これまでの歴史や取り決め、ハイトレ手法の前提を凝縮して要約させる
             summary_completion = client.chat.completions.create(
                 model=TARGET_MODEL,
                 messages=[
-                    {"role": "system", "content": "以下の会話の要点を箇条書きで極力短く日本語で要約してください。"},
+                    {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話履歴から、サキエルとの重要な約束事、ハイトレ手法の前提知識（MTF、20EMA/200EMA、資金管理等）、およびこれまでの経緯を、後から読んでも絶対に忘れないように詳細かつコンパクトに日本語で要約（魔導書の記憶継承）してください。"},
                     {"role": "user", "content": text_to_summarize}
                 ],
                 temperature=0.3,
-                max_tokens=150
+                max_tokens=400
             )
             summary_text = summary_completion.choices[0].message.content.strip()
             
+            # テーブルをリセットして綺麗にする
             supabase.table("memories").delete().neq("content", "___DUMMY_NEVER_MATCH___").execute()
             
+            # 要約を最初のシステム記憶として書き込む
             supabase.table("memories").insert({
-                "content": f"system: 【要約】 {summary_text}"
+                "content": f"system: 【フリーレンの記憶継承（要約）】\n{summary_text}"
             }).execute()
             
+            # 直近のやり取りをそのまま復元
             for r in recent_rows:
                 original_content = r.get("content")
-                if original_content.startswith("user: "):
-                    supabase.table("memories").insert({"content": original_content}).execute()
-                elif original_content.startswith("assistant: "):
-                    supabase.table("memories").insert({"content": original_content}).execute()
-                elif original_content.startswith("system: "):
+                if original_content:
                     supabase.table("memories").insert({"content": original_content}).execute()
                 
     except Exception as e:
-        print(f"【要約処理エラー】: {e}")
+        print(f"【フリーレン要約処理エラー】: {e}")
 
 def save_memory_to_supabase(role: str, content: str):
     if not supabase:
@@ -152,10 +151,6 @@ HTML_TEMPLATE = """
             list-style-type: disc;
             margin-bottom: 1px !important;
         }
-        
-        /* テーブルの余白調整（もし表が出た場合のため） */
-        .message table { width: 100%; border-collapse: collapse; margin: 2px 0; font-size: 12px; }
-        .message th, .message td { border: 1px solid #444; padding: 3px 5px; }
 
         .user { background: #2b3a4a; align-self: flex-end; }
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
@@ -340,10 +335,10 @@ def index():
             "とてもフレンドリーで優しく、親しみやすい話し方をしてください。"
             "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞を絶対に混入させないこと。"
             "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
-            "【ハイトレ手法の前提知識】"
-            "1. マルチタイムフレーム分析: M15 (15分足) でトレンドの方向やバイアスを固定し、M5 (5分足) や短期足でエントリータイミングを測る。4時間足トレードをすべての軸 (土台) とする。"
-            "2. 資金管理の思想: 期待値の低い小額コツコツトレードに固執せず、規律的な資金分割を行い、ここぞという大チャンスの場面で適切なロットを張る（ただし退場は絶対にしない）。"
-            "3. エントリー精度の極限追求: チャンネル内での根拠重ね合わせを重視し、高勝率なポイントに絞ってエントリーをすることが大切。"
+            "【ハイトレ手法の前提知識（絶対に忘れないこと）】"
+            "1. マルチタイムフレーム分析: 4時間足（全体トレンド・バイアス）、M15（15分足で方向性確認）、M5（5分足でエントリータイミング測定）の組み合わせ。"
+            "2. 移動平均線: 20EMAと200EMAの両方を活用する。"
+            "3. 資金管理: 退場しないこと（損切りは設定しない、資金分割とロット管理）を徹底する。"
             "【出力フォーマット制限】"
             "結論ファーストを意識しつつ、堅苦しくならずフランクに、要点を分かりやすくまとめて答えてね。"
         )
