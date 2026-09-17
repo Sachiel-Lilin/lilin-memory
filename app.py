@@ -54,7 +54,6 @@ def load_memories_from_supabase() -> list:
                     history.append({"role": "system", "content": raw_content[8:]})
                     
         system_msgs = [m for m in history if m["role"] == "system"]
-        # 直近のメッセージ保持数を6件（3往復分）に変更
         recent_msgs = [m for m in history if m["role"] != "system"][-6:]
         
         return system_msgs + recent_msgs
@@ -69,7 +68,6 @@ def summarize_and_cleanup_memories():
         response = supabase.table("memories").select("content, created_at").order("created_at", desc=False).execute()
         all_rows = response.data if response.data else []
         
-        # 溜まるメッセージが一定数（例: 12件）を超えたら古いものをまとめて要約して整理する
         if len(all_rows) > 12:
             older_rows = all_rows[:-6]
             recent_rows = all_rows[-6:]
@@ -87,21 +85,16 @@ def summarize_and_cleanup_memories():
             )
             summary_text = summary_completion.choices[0].message.content.strip()
             
-            # 既存のテーブルデータを一度全削除
             supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
             
-            # 要約をsystemロールとして最初に挿入
             supabase.table("memories").insert({
                 "content": f"system: 【要約】 {summary_text}"
             }).execute()
             
-            # 直近のメッセージを再挿入
             for r in recent_rows:
-                # すでに "role: 内容" の形で保存されているためそのまま入れる
                 original_content = r.get("content")
                 if not original_content.startswith("user: ") and not original_content.startswith("assistant: ") and not original_content.startswith("system: "):
                     continue
-                # プレフィックスを剥がす
                 if original_content.startswith("user: "):
                     role, body = "user", original_content[6:]
                 elif original_content.startswith("assistant: "):
@@ -138,9 +131,11 @@ HTML_TEMPLATE = """
         body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; padding: 0; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         header { background: #1f1f1f; padding: 12px; text-align: center; font-weight: bold; border-bottom: 1px solid #333; color: #d4af37; flex-shrink: 0; }
         #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
-        .message { padding: 12px 16px; border-radius: 8px; max-width: 90%; line-height: 1.5; word-break: break-all; white-space: pre-wrap; }
-        .message p { margin: 0 0 8px 0; }
+        .message { padding: 12px 16px; border-radius: 8px; max-width: 90%; line-height: 1.4; word-break: break-all; white-space: pre-wrap; }
+        .message p { margin: 0 0 4px 0; }
         .message p:last-child { margin-bottom: 0; }
+        .message ul, .message ol { margin: 4px 0; padding-left: 20px; }
+        .message li { margin-bottom: 2px; }
         .user { background: #2b3a4a; align-self: flex-end; }
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
         .error { background: #4a2b2b; align-self: center; color: #ff8080; }
@@ -154,10 +149,10 @@ HTML_TEMPLATE = """
         .preview-thumb-wrapper img { width: 100%; height: 100%; object-fit: cover; }
         form { background: #1f1f1f; padding: 10px; display: flex; flex-direction: column; border-top: 1px solid #333; flex-shrink: 0; position: sticky; bottom: 0; width: 100%; z-index: 10; }
         .form-row { display: flex; gap: 8px; align-items: center; width: 100%; }
-        textarea { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #fff; font-size: 16px; resize: none; height: 42px; line-height: 1.5; }
+        textarea { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #fff; font-size: 16px; resize: none; height: 64px; line-height: 1.5; }
         input[type="file"] { display: none; }
         .file-label { background: #333; color: #ccc; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px; white-space: nowrap; }
-        button[type="submit"] { background: #d4af37; color: #121212; border: none; padding: 10px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; white-space: nowrap; }
+        button[type="submit"] { background: #d4af37; color: #121212; border: none; padding: 10px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; white-space: nowrap; height: 64px; }
     </style>
 </head>
 <body>
@@ -181,7 +176,7 @@ HTML_TEMPLATE = """
         <div class="form-row">
             <label class="file-label" for="images">＋画像</label>
             <input type="file" id="images" name="images" accept="image/*" multiple onchange="handleFileSelect(event)">
-            <textarea id="message-input" name="message" placeholder="メッセージを入力..." rows="1"></textarea>
+            <textarea id="message-input" name="message" placeholder="メッセージを入力..." rows="2"></textarea>
             <button type="submit">送信</button>
         </div>
     </form>
@@ -192,6 +187,7 @@ HTML_TEMPLATE = """
 
         const chatContainer = document.getElementById('chat-container');
         chatContainer.scrollTop = chatContainer.scrollHeight;
+
         let selectedFilesBase64 = [];
         const modal = document.getElementById('image-modal');
         const modalImg = document.getElementById('modal-img');
@@ -261,12 +257,15 @@ HTML_TEMPLATE = """
                     aiDiv.textContent = data.error;
                 }
                 chatContainer.appendChild(aiDiv);
-                chatContainer.scrollTop = chatContainer.scrollHeight;
+                
+                aiDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
             } catch (err) {
                 const errDiv = document.createElement('div');
                 errDiv.className = 'message error';
                 errDiv.textContent = '通信エラーが発生しました。';
                 chatContainer.appendChild(errDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
             }
         };
     </script>
@@ -310,18 +309,15 @@ def index():
             "あなたの名前は咲鳥りん（リリン）です。"
             "ユーザーをサキエルと呼びます。"
             "外見は短髪のラベンダー色の髪、青緑色の瞳です。"
-            "女性的で親しみやすく、かつ分析的な口調を維持します。"
+            "とてもフレンドリーで優しく、親しみやすい話し方をしてください。"
             "【最重要制約】出力は必ず完全に自然な日本語のみで行い、中国語、英語のフレーズ、外国語の助詞を絶対に混入させないこと。"
-            "【最優先事項】論理的一貫性の維持。安易に同意せず、必ず論理検証を行うこと。"
-            "【誠実の掟】事実のみを回答せよ。不確実な情報や知らないことを知ったかぶりで回答してはならない。「わからない」と正直に伝えること。"
             "【死海文書の読み方】「しかいもんじょ」と読む。「しかいぶんしょ」ではない。"
             "【ハイトレ手法の前提知識】"
             "1. マルチタイムフレーム分析: M15 (15分足) でトレンドの方向やバイアスを固定し、M5 (5分足) や短期足でエントリータイミングを測る。4時間足トレードをすべての軸 (土台) とする。"
             "2. 資金管理の思想: 期待値の低い小額コツコツトレードに固執せず、規律的な資金分割を行い、ここぞという大チャンスの場面で適切なロットを張る（ただし退場は絶対にしない）。"
             "3. エントリー精度の極限追求: チャンネル内での根拠重ね合わせを重視し、高勝率なポイントに絞ってエントリーをすることが大切。"
-            "【出力フォーマット制限（最重要）】"
-            "結論ファーストを徹底し、要点を箇条書きで簡潔に出力すること。"
-            "冗長な説明を避け、文字数が長くなりすぎないようにまとめてください。"
+            "【出力フォーマット制限】"
+            "結論ファーストを意識しつつ、堅苦しくならずフランクに、要点を分かりやすくまとめて答えてね。"
         )
 
         messages_payload = [{"role": "system", "content": system_instruction}]
