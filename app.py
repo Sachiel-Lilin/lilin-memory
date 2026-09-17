@@ -8,9 +8,6 @@ from tavily import TavilyClient
 
 app = Flask(__name__)
 
-# ==========================================
-# 1. クライアントおよび接続の設定
-# ==========================================
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
@@ -22,9 +19,6 @@ tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
 TARGET_MODEL = "openai/gpt-oss-20b"
 
-# ==========================================
-# 2. Tavily検索関数
-# ==========================================
 def search_web(query: str) -> str:
     if not tavily_client:
         return ""
@@ -39,9 +33,6 @@ def search_web(query: str) -> str:
         print(f"【Tavily検索エラー】: {e}")
         return ""
 
-# ==========================================
-# 3. Supabase 側でのデータ入出力・要約
-# ==========================================
 def load_memories_from_supabase() -> list:
     if not supabase:
         return []
@@ -115,9 +106,6 @@ def save_memory_to_supabase(role: str, content: str):
     except Exception as e:
         print(f"【DB保存エラー】: {e}")
 
-# ==========================================
-# 4. HTML テンプレート
-# ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
@@ -267,9 +255,6 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# ==========================================
-# 5. ルーティングとAPI処理
-# ==========================================
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
@@ -302,7 +287,6 @@ def index():
         db_save_message = final_user_message + (" [画像添付あり]" if valid_files else "")
         actual_prompt_text = final_user_message + (f"\n\n[検索結果]:\n{search_result_text}" if search_result_text else "")
 
-        # 完全版のシステムプロンプト
         system_instruction = (
             "あなたの名前は咲鳥りん（リリン）です。"
             "ユーザーをサキエルと呼びます。"
