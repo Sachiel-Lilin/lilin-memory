@@ -91,7 +91,7 @@ def summarize_and_cleanup_memories():
                 ],
                 temperature=0.3,
                 max_tokens=100
-            ]
+            )
             summary_text = summary_completion.choices[0].message.content.strip()
             
             supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
@@ -161,14 +161,6 @@ HTML_TEMPLATE = """
                 <div class="message {{ 'assistant' if msg.role == 'assistant' else 'user' }}">
                     {% if msg.role == 'assistant' %}
                         <div class="markdown-content">{{ msg.content }}</div>
-                        <script>
-                            (function() {
-                                const sc = document.currentScript.previousElementSibling;
-                                if(sc && sc.classList.contains('markdown-content')) {
-                                    sc.innerHTML = marked.parse(sc.textContent);
-                                }
-                            })();
-                        </script>
                     {% else %}
                         {{ msg.content }}
                     {% endif %}
@@ -187,6 +179,10 @@ HTML_TEMPLATE = """
         </div>
     </form>
     <script>
+        document.querySelectorAll('.markdown-content').forEach(el => {
+            el.innerHTML = marked.parse(el.textContent);
+        });
+
         const chatContainer = document.getElementById('chat-container');
         chatContainer.scrollTop = chatContainer.scrollHeight;
         let selectedFilesBase64 = [];
@@ -213,7 +209,7 @@ HTML_TEMPLATE = """
                         const w = document.createElement('div'); w.className = 'preview-thumb-wrapper';
                         const img = document.createElement('img'); img.src = e.target.result;
                         w.appendChild(img); pc.appendChild(w);
-                    }
+                    };
                     reader.readAsDataURL(input.files[i]);
                 }
             }
@@ -252,7 +248,11 @@ HTML_TEMPLATE = """
                 const data = await res.json();
                 const aiDiv = document.createElement('div');
                 aiDiv.className = data.status === 'success' ? 'message assistant' : 'message error';
-                aiDiv.innerHTML = data.status === 'success' ? marked.parse(data.reply) : data.error;
+                if (data.status === 'success') {
+                    aiDiv.innerHTML = marked.parse(data.reply);
+                } else {
+                    aiDiv.textContent = data.error;
+                }
                 chatContainer.appendChild(aiDiv);
                 chatContainer.scrollTop = chatContainer.scrollHeight;
             } catch (err) {
