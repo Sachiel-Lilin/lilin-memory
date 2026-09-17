@@ -133,11 +133,24 @@ HTML_TEMPLATE = """
         #chat-container { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; -webkit-overflow-scrolling: touch; }
         .message { padding: 12px 16px; border-radius: 8px; max-width: 90%; line-height: 1.4; word-break: break-all; white-space: pre-wrap; }
         
-        /* 【余白徹底詰めの強化】マークダウンのpやリストの上下マージンを完全になくす */
-        .message p { margin: 0 !important; padding: 0 !important; }
-        .message ul, .message ol { margin: 0 !important; padding-left: 18px !important; }
-        .message li { margin: 0 !important; padding: 0 !important; }
-        .message br { display: none; }
+        /* 【完全ギチギチ詰め設定】マークダウンの全要素の余白を完全に排除 */
+        .message p, .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        .message ul, .message ol {
+            margin: 0 !important;
+            padding-left: 16px !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+        }
+        .message li {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        .message li + li {
+            margin-top: 0px !important;
+        }
 
         .user { background: #2b3a4a; align-self: flex-end; }
         .assistant { background: #1e1e1e; align-self: flex-start; border: 1px solid #333; }
