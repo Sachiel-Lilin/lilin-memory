@@ -77,27 +77,34 @@ def summarize_and_cleanup_memories():
             summary_completion = client.chat.completions.create(
                 model=TARGET_MODEL,
                 messages=[
-                    {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話履歴から、サキエルとの重要な約束事、ハイトレ手法の前提知識（MTF、20EMA/200EMA、資金管理等）、およびこれまでの経緯を、後から読んでも絶対に忘れないように詳細かつコンパクトに日本語で要約（魔導書の記憶継承）してください。"},
+                    {"role": "system", "content": "あなたは優秀な記録係です。以下のこれまでの会話履歴から、サキエルとの重要な約束事、ハイトレ手法の前提知識（MTF、20EMA/200EMA、資金管理等）、およびこれまでの経緯を、後から読んでも絶対に忘れないように詳細かつコンパクトに日本語で要約（魔導書の記憶継承）してください。出力は必ず要約テキストのみを返してください。"},
                     {"role": "user", "content": text_to_summarize}
                 ],
                 temperature=0.3,
                 max_tokens=400
             )
-            summary_text = summary_completion.choices[0].message.content.strip()
             
-            # テーブルをリセットして綺麗にする
-            supabase.table("memories").delete().neq("content", "___DUMMY_NEVER_MATCH___").execute()
+            # 安全にテキストを取り出す（空対策）
+            summary_text = ""
+            if summary_completion and summary_completion.choices:
+                msg = summary_completion.choices[0].message
+                if hasattr(msg, "content") and msg.content:
+                    summary_text = msg.content.strip()
             
-            # 要約を最初のシステム記憶として書き込む
-            supabase.table("memories").insert({
-                "content": f"system: 【フリーレンの記憶継承（要約）】\n{summary_text}"
-            }).execute()
-            
-            # 直近のやり取りをそのまま復元
-            for r in recent_rows:
-                original_content = r.get("content")
-                if original_content:
-                    supabase.table("memories").insert({"content": original_content}).execute()
+            # 要約が空でなければテーブルをリセットして置き換える
+            if summary_text:
+                supabase.table("memories").delete().neq("content", "___DUMMY_NEVER_MATCH___").execute()
+                
+                # 要約を最初のシステム記憶として書き込む
+                supabase.table("memories").insert({
+                    "content": f"system: 【フリーレンの記憶継承（要約）】\n{summary_text}"
+                }).execute()
+                
+                # 直近のやり取りをそのまま復元
+                for r in recent_rows:
+                    original_content = r.get("content")
+                    if original_content:
+                        supabase.table("memories").insert({"content": original_content}).execute()
                 
     except Exception as e:
         print(f"【フリーレン要約処理エラー】: {e}")
@@ -367,7 +374,13 @@ def index():
                 temperature=0.7,
                 max_tokens=2048
             )
-            ai_reply = str(completion.choices[0].message.content)
+            if completion and completion.choices:
+                msg_obj = completion.choices[0].message
+                if hasattr(msg_obj, "content"):
+                    ai_reply = str(msg_obj.content)
+            
+            if not ai_reply:
+                raise ValueError("APIからの応答が空です。")
         except Exception as e:
             return jsonify({"status": "error", "error": f"API制限エラー: {str(e)}"})
 
