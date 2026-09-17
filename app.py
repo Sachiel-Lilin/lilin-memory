@@ -20,14 +20,12 @@ client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 tavily_client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
-# トークン消費を抑えつつ動作するモデル
 TARGET_MODEL = "openai/gpt-oss-20b"
 
 # ==========================================
 # 2. Tavily検索関数
 # ==========================================
 def search_web(query: str) -> str:
-    """Tavily APIを使用してWeb検索を行い、結果をテキストで返す"""
     if not tavily_client:
         return ""
     try:
@@ -42,10 +40,9 @@ def search_web(query: str) -> str:
         return ""
 
 # ==========================================
-# 3. Supabase 側でのデータ入出力・要約（トークン節約型）
+# 3. Supabase 側でのデータ入出力・要約
 # ==========================================
 def load_memories_from_supabase() -> list:
-    """Supabaseから履歴を読み込むが、送信量を抑えるために直近の数件のみにする"""
     if not supabase:
         return []
     try:
@@ -65,7 +62,6 @@ def load_memories_from_supabase() -> list:
                 elif raw_content.startswith("system: "):
                     history.append({"role": "system", "content": raw_content[8:]})
                     
-        # 【トークン節約対策】システム要約 ＋ 直近の会話は「最大2往復（4件）」までに厳しく制限
         system_msgs = [m for m in history if m["role"] == "system"]
         recent_msgs = [m for m in history if m["role"] != "system"][-4:]
         
@@ -75,14 +71,12 @@ def load_memories_from_supabase() -> list:
         return []
 
 def summarize_and_cleanup_memories():
-    """古い履歴をギュッと要約してトークン消費を節約する"""
     if not supabase or not client:
         return
     try:
         response = supabase.table("memories").select("content, created_at").order("created_at", desc=False).execute()
         all_rows = response.data if response.data else []
         
-        # 履歴が溜まりすぎたら（例: 8件以上）古いものを要約に圧縮
         if len(all_rows) > 8:
             older_rows = all_rows[:-4]
             recent_rows = all_rows[-4:]
@@ -100,7 +94,6 @@ def summarize_and_cleanup_memories():
             ]
             summary_text = summary_completion.choices[0].message.content.strip()
             
-            # DBをクリアして要約と直近のみ再登録
             supabase.table("memories").delete().neq("content", "___DUMMY___").execute()
             
             supabase.table("memories").insert({
@@ -284,7 +277,12 @@ def index():
         uploaded_files = request.files.getlist("images")
         db_history = load_memories_from_supabase()
 
-        valid_files = [f for f in uploaded_files if f and f.filename != ''][:2]
+        valid_files = []
+        for f in uploaded_files:
+            if f and f.filename != '':
+                valid_files.append(f)
+        valid_files = valid_files[:2]
+
         image_data_list = []
         for f in valid_files:
             file_bytes = f.read()
@@ -297,7 +295,6 @@ def index():
         if not final_user_message and not valid_files:
             return jsonify({"status": "error", "error": "メッセージまたは画像を入力してください。"})
 
-        # 必要時のみ検索
         search_result_text = ""
         if any(kw in final_user_message for kw in ["検索", "調べて", "最新", "今の", "ニュース", "教えて"]) and len(final_user_message) > 2:
             search_result_text = search_web(final_user_message)
@@ -305,11 +302,10 @@ def index():
         db_save_message = final_user_message + (" [画像添付あり]" if valid_files else "")
         actual_prompt_text = final_user_message + (f"\n\n[検索結果]:\n{search_result_text}" if search_result_text else "")
 
-        # システムプロンプト（トークン消費を抑えるため簡潔化しつつペルソナ維持）
         system_instruction = (
             "名前は咲鳥りん（リリン）。ユーザーをサキエルと呼ぶ。"
             "女性的で分析的な口調。必ず自然な日本語のみを使用すること。"
-            "【制約】結論ファーストで、要点を箇条書きで簡潔に出力すること（最大出力トークン制限のため長文禁止）。"
+            "【制約】結論ファーストで、要点を箇条書きで簡潔に出力すること。"
         )
 
         messages_payload = [{"role": "system", "content": system_instruction}]
@@ -334,7 +330,7 @@ def index():
                 model=TARGET_MODEL,
                 messages=messages_payload,
                 temperature=0.7,
-                max_tokens=400  # 1回あたりのトークン消費を抑える
+                max_tokens=400
             )
             ai_reply = str(completion.choices[0].message.content)
         except Exception as e:
