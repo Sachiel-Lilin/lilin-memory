@@ -9,26 +9,10 @@ def main():
 
     client = genai.Client(api_key=api_key)
 
-    # 利用可能なモデルの一覧をログに出力して確認
-    print("=== Available Models ===")
-    target_model = None
-    try:
-        for m in client.models.list():
-            # generateContentをサポートしているモデルを探す
-            if m.supported_actions and "generateContent" in m.supported_actions:
-                print(f"- {m.name} (base: {m.base_model_id})")
-                if not target_model and m.base_model_id:
-                    target_model = m.base_model_id
-    except Exception as e:
-        print(f"Failed to list models: {e}")
+    # 推奨されている最新のモデルを指定
+    target_model = "gemini-3.6-flash"
+    print(f"Using model: {target_model}")
 
-    # フォールバックとして標準的なモデル名を指定
-    if not target_model:
-        target_model = "gemini-2.5-flash"
-
-    print(f"\nUsing model: {target_model}")
-
-    # テスト対話の実行
     prompt = "「こんにちは、リリン。今日の調子はどう？」と聞いてみたよ。一言で返事をして。"
     print(f"Prompt: {prompt}")
 
