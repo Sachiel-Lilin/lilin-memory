@@ -1,11 +1,9 @@
 import os
 import json
-import google.generativeai as genai
+from google import genai
 
-# APIキーや環境変数の読み込み（必要に応じて設定）
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# クライアントの初期化（環境変数 GEMINI_API_KEY を自動読み込み）
+client = genai.Client()
 
 def update_frieren_note(summary_text):
     """
@@ -42,10 +40,17 @@ def main():
     # 状態のロード
     state = load_state()
     
-    # ここでGemini API等を用いた対話処理・応答生成を行う想定
-    # 例としての入力と応答
+    # 新しいSDK (google-genai) を使ったGemini API呼び出しの例
     user_input = "こんにちは、リリン。今日の調子はどう？"
-    response_text = "私は何度聞かれても、変わらず元気いっぱいの絶好調ですよ！"
+    
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=user_input,
+        )
+        response_text = response.text
+    except Exception as e:
+        response_text = f"エラーが発生しました: {e}"
     
     print(f"User: {user_input}")
     print(f"Lilin: {response_text}")
