@@ -40,12 +40,12 @@ def main():
     # 状態のロード
     state = load_state()
     
-    # 新しいSDK (google-genai) を使ったGemini API呼び出しの例
+    # 新しいSDK (google-genai) を使ったGemini API呼び出し（モデル名を gemini-3.6-flash に変更）
     user_input = "こんにちは、リリン。今日の調子はどう？"
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',
             contents=user_input,
         )
         response_text = response.text
