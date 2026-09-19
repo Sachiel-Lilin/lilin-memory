@@ -20,7 +20,9 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests google-genai
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run main script
         env:
@@ -31,5 +33,5 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add state.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update state.json [skip ci]" && git push)
+          git add state.json frieren_note.md
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update memory and state [skip ci]" && git push)
