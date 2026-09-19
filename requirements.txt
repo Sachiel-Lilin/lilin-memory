@@ -1,5 +1,2 @@
-Flask
-groq
-supabase
-tavily-python
-gunicorn
+Flask==3.0.2
+requests==2.31.0
