@@ -1,40 +1,92 @@
 import os
-import datetime
-from flask import Flask, request, jsonify
+import json
+import streamlit as st
+from google import genai
 
-app = Flask(__name__)
+# 画面の基本設定
+st.set_page_title_config = st.set_page_config(page_title="LILIN Terminal", layout="centered")
 
-MASTER_PATH = "master.md"
-FRIEREN_PATH = "frieren_note.md"
+st.title("🔴 LILIN Autonomous Terminal")
+st.caption("System Interface & State Monitor")
 
-def read_file(path):
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-    return ""
+STATE_FILE = "state.json"
 
-def write_file(path, content):
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-@app.route("/sync", methods=["GET"])
-def sync_state():
-    master_content = read_file(MASTER_PATH)
-    frieren_content = read_file(FRIEREN_PATH)
-    return jsonify({
-        "status": "success",
-        "master": master_content,
-        "frieren_note": frieren_content,
-        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"history": []}
 
-@app.route("/update", methods=["POST"])
-def update_state():
-    data = request.json or {}
-    new_note = data.get("note", "")
-    if new_note:
-        write_file(FRIEREN_PATH, new_note)
-        return jsonify({"status": "updated", "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    return jsonify({"status": "error", "message": "No note provided"}), 400
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+# APIキーの取得（環境変数またはStreamlitのSecrets）
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+
+if not api_key:
+    st.error("Error: GEMINI_API_KEY が設定されていません。")
+else:
+    client = genai.Client(api_key=api_key)
+    target_model = "gemini-3.6-flash"
+
+    state = load_state()
+    history = state.get("history", [])
+
+    # チャット履歴の表示
+    for message in history:
+        role = message.get("role")
+        text = message.get("parts", [{}])[0].get("text", "")
+        if role == "user":
+            with st.chat_message("user"):
+                st.markdown(text)
+        elif role == "model":
+            with st.chat_message("assistant"):
+                st.markdown(text)
+
+    # ユーザーからの入力
+    if user_message := st.chat_input("メッセージを入力..."):
+        with st.chat_message("user"):
+            st.markdown(user_message)
+        
+        history.append({"role": "user", "parts": [{"text": user_message}]})
+
+        # トークン圧迫防止のための直近履歴制限
+        max_turns = 10
+        send_history = history[-max_turns:]
+        chat_history = send_history[:-1] if len(send_history) > 1 else []
+
+        try:
+            chat = client.chats.create(model=target_model, history=chat_history)
+            response = chat.send_message(user_message)
+            bot_reply = response.text
+
+            with st.chat_message("assistant"):
+                st.markdown(bot_reply)
+
+            history.append({"role": "model", "parts": [{"text": bot_reply}]})
+            state["history"] = history
+            save_state(state)
+
+        except Exception as e:
+            st.error(f"API Error: {e}")
+
+    # サイドバーにstate.jsonの状態を表示
+    with st.sidebar:
+        st.subheader("System State")
+        st.text(f"Total turns: {len(history)}")
+        if st.button("履歴をリセット"):
+            state = {"history": []}
+            save_state(state)
+            st.rerun()
+        
+        with st.expander("state.json Raw"):
+            st.json(state)
