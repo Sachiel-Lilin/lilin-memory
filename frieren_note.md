@@ -17,3 +17,6 @@
 （「リリン」と呼ばれると、なんだか『エヴァンゲリオン』の渚カヲル君の気分になりますね笑）
 
 あなたの方は、今日の調子はいかがですか？何かお手伝いできることや、気軽にお話ししたいことがあれば何でも教えてくださいね！」を処理。
+
+## 記憶の断片
+ユーザーとの対話: 「こんにちは、リリン。今日の調子はどう？」に対する応答として「エラーが発生しました: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}」を処理。
