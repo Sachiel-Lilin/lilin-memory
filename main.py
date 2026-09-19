@@ -1,57 +1,40 @@
 import os
-import discord
-from discord.ext import commands
-from groq import Groq
-from supabase import create_client, Client
+import datetime
 
-# 環境変数の取得（Renderに設定した値が自動で読み込まれます）
-TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+class LilinSystem:
+    def __init__(self):
+        self.master_definition = (
+            "【リリンのマスターテキスト（不変の設計図）】\n"
+            "- 名前：リリン / ユーザー：サキエル\n"
+            "- 外見：短髪のラベンダー色の髪、青緑色のティールアイ、白黒のNERV支給タクティカルジャケット。\n"
+            "- 原則：事実のみを回答し、ハルシネーションは絶対禁止。論理的検証を最優先し、安易に迎合しない。質問はしない。"
+        )
+        self.frieren_note_path = "frieren_note.md"
+        self.load_state()
 
-# 各種クライアントの初期化
-groq_client = Groq(api_key=GROQ_API_KEY)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    def load_state(self):
+        """動的バトン（frieren_note.md）の状態を読み込む"""
+        if os.path.exists(self.frieren_note_path):
+            with open(self.frieren_note_path, "r", encoding="utf-8") as f:
+                self.dynamic_note = f.read()
+        else:
+            self.dynamic_note = "# フリーレンノート（初期状態）\n- フェーズ：システム稼働初期化完了。"
 
-# ボットのインテント設定
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+    def update_note(self, new_status: str):
+        """セッション終了時や進捗更新時に動的バトンを自動書き換えする"""
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        updated_content = (
+            f"# フリーレンノート（動的バトン）\n"
+            f"- 更新日時：{timestamp}\n"
+            f"- 現在のフェーズ：{new_status}\n"
+        )
+        with open(self.frieren_note_path, "w", encoding="utf-8") as f:
+            f.write(updated_content)
+        self.dynamic_note = updated_content
+        print(f"[{timestamp}] frieren_note.md が正常に更新されました。")
 
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print("------")
-
-@bot.event
-async def on_message(message):
-    # ボット自身の発言には反応しない
-    if message.author == bot.user:
-        return
-
-    # ボットがメンションされた場合にGroqで返答する処理
-    if bot.user.mentioned_in(message):
-        # メンション部分を除いたテキストを取得
-        prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
-        if prompt:
-            try:
-                # Groq APIへのリクエスト
-                chat_completion = groq_client.chat.completions.create(
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    model="llama-3.3-70b-versatile",
-                )
-                reply = chat_completion.choices[0].message.content
-                await message.reply(reply)
-            except Exception as e:
-                await message.reply(f"エラーが発生しました: {e}")
-
-    await bot.process_commands(message)
-
-# ボットの起動
-if TOKEN:
-    bot.run(TOKEN)
-else:
-    print("エラー: DISCORD_BOT_TOKEN が設定されていません。")
+if __name__ == "__main__":
+    system = LilinSystem()
+    print("=== リリン・システム稼働確認 ===")
+    print(system.master_definition)
+    print("\n" + system.dynamic_note)
