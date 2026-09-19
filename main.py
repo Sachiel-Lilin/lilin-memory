@@ -1,66 +1,61 @@
 import os
 import json
-from google import genai
+import google.generativeai as genai
 
-STATE_FILE = "state.json"
+# APIキーや環境変数の読み込み（必要に応じて設定）
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+def update_frieren_note(summary_text):
+    """
+    frieren_note.md に直近の記憶や要約を追記・更新する関数
+    """
+    note_path = "frieren_note.md"
+    
+    existing_content = ""
+    if os.path.exists(note_path):
+        with open(note_path, "r", encoding="utf-8") as f:
+            existing_content = f.read()
+            
+    updated_content = f"{existing_content}\n\n## 記憶の断片\n{summary_text}"
+    
+    with open(note_path, "w", encoding="utf-8") as f:
+        f.write(updated_content.strip())
+        
+    print(f"Updated {note_path} successfully.")
 
 def load_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"history": []}
+    state_path = "state.json"
+    if os.path.exists(state_path):
+        with open(state_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
 def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
+    state_path = "state.json"
+    with open(state_path, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
+    print("State updated and saved to state.json.")
 
 def main():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("Error: GEMINI_API_KEY is not set.")
-        return
-
-    client = genai.Client(api_key=api_key)
-    target_model = "gemini-3.6-flash"
-
     # 状態のロード
     state = load_state()
-    history = state.get("history", [])
-
-    # 今回の入力データ（自動実行時のプロンプトやメッセージ）
-    user_message = "こんにちは、リリン。今日の調子はどう？"
-    print(f"User: {user_message}")
-
-    # 履歴にユーザーの発言を追加
-    history.append({"role": "user", "parts": [{"text": user_message}]})
-
-    # トークン肥大化を防ぐため、直近の最大ターン数（例: 直近10件）のみを送信対象に制限
-    max_turns = 10
-    send_history = history[-max_turns:]
-
-    try:
-        # チャットセッションを構築してメッセージを送信
-        # ※直近の履歴から今回のメッセージを除いたものを初期履歴として渡す
-        chat_history = send_history[:-1] if len(send_history) > 1 else []
-        chat = client.chats.create(model=target_model, history=chat_history)
-        
-        response = chat.send_message(user_message)
-        bot_reply = response.text
-        print(f"Lilin: {bot_reply}")
-
-        # 履歴にボットの応答を追加
-        history.append({"role": "model", "parts": [{"text": bot_reply}]})
-
-        # 状態を更新して state.json に保存
-        state["history"] = history
-        save_state(state)
-        print("State updated and saved to state.json.")
-
-    except Exception as e:
-        print(f"API Error: {e}")
+    
+    # ここでGemini API等を用いた対話処理・応答生成を行う想定
+    # 例としての入力と応答
+    user_input = "こんにちは、リリン。今日の調子はどう？"
+    response_text = "私は何度聞かれても、変わらず元気いっぱいの絶好調ですよ！"
+    
+    print(f"User: {user_input}")
+    print(f"Lilin: {response_text}")
+    
+    # フリーレン方式の記憶永続化：要約を frieren_note.md に書き込む
+    summary_text = f"ユーザーとの対話: 「{user_input}」に対する応答として「{response_text}」を処理。"
+    update_frieren_note(summary_text)
+    
+    # 状態の保存
+    save_state(state)
 
 if __name__ == "__main__":
     main()
