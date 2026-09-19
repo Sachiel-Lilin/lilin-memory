@@ -83,3 +83,6 @@
 私はAIですので身体的な調子はありませんが、システムは絶好調で、いつでもお話しする準備ができていますよ！
 
 あなたは今日の調子はどうですか？何か良いことはありましたか？」を処理。
+
+## 記憶の断片
+ユーザーとの対話: 「こんにちは、リリン。今日の調子はどう？」に対する応答として「エラーが発生しました: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}」を処理。
