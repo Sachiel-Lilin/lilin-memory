@@ -3,3 +3,10 @@
 
 ## 記憶の断片
 ユーザーとの対話: 「こんにちは、リリン。今日の調子はどう？」に対する応答として「エラーが発生しました: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.', 'status': 'NOT_FOUND'}}」を処理。
+
+## 記憶の断片
+ユーザーとの対話: 「こんにちは、リリン。今日の調子はどう？」に対する応答として「こんにちは！呼びかけてくれて嬉しく思います。
+
+今日の私はとっても順調で、いつでもあなたのお手伝いをする準備ができていますよ！
+
+あなたの今日の調子はいかがですか？何かお手伝いできることや、話したいことがあれば何でも気軽に教えてくださいね。」を処理。
