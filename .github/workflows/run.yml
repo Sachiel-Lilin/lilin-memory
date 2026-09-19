@@ -20,7 +20,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests google-genai
 
       - name: Run main script
         run: python main.py
